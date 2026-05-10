@@ -11,9 +11,9 @@ A Python command-line tool designed to verify ROM and ISO files against official
 #### Features
 * **Multiple Verification Commands:** Includes `redump` for DAT-based verification and `integrity-check` for archive testing.
 * **Multiple Hashing Algorithms:** Calculates CRC32, MD5, and SHA-1 simultaneously for Redump verification.
-* **Memory Efficient:** Reads files and streams archive contents in 4MB chunks without extracting to disk.
+* **Memory Efficient:** Reads plain files in 4MB chunks. For archives, decompressed data is streamed directly into the hash calculator — no temp files, no disk writes.
 * **Batch Processing:** Scan a single file or an entire directory.
-* **Archive Support:** Verifies ROMs directly inside ZIP and 7Z archives without writing to disk.
+* **Archive Support:** Verifies ROMs inside ZIP and 7Z archives by streaming decompressed data directly into the hash calculator — no temp files, no disk writes.
 * **Signal Handling:** Gracefully handles Ctrl+C and SIGTERM with a clean exit message.
 * **No External System Dependencies:** Built entirely with Python. Uses `py7zr >= 1.0` for `.7z` support.
 
@@ -42,7 +42,7 @@ python3 verify.py --directory path/to/roms/ integrity-check
 **Additional Options:**
 * `--log-file <path>`: Save the console output to a log file.
 * `--log-level <LEVEL>`: Set the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`.
-* `--archived-rom`: (for `redump` command) Treat ZIP/7z files as archives and verify the ROMs inside them directly, without extracting to disk.
+* `--archived-rom`: (for `redump` command) Verify the ROMs inside ZIP/7z archives by streaming decompressed data directly into the hash calculator — no temp files, no disk writes.
 * `--result <path>`: (for `redump` command) Output a JSON file mapping verified and failed filenames to their SHA-1 hashes.
 
 ---
