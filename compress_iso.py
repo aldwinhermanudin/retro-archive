@@ -158,6 +158,10 @@ Examples:
             bytes_saved = original_size - compressed_size
             compression_ratio = compressed_size / original_size if original_size > 0 else 0
             
+            logging.info(f"    Original Size:   {original_size / (1024*1024):.2f} MB")
+            logging.info(f"    Compressed Size: {compressed_size / (1024*1024):.2f} MB")
+            logging.info(f"    Space Saved:     {bytes_saved / (1024*1024):.2f} MB ({(1 - compression_ratio) * 100:.1f}%)")
+            
             results["success"].append({
                 "file": filepath,
                 "output": output_path,
