@@ -2,6 +2,7 @@
 import os
 import sys
 import io
+import signal
 import argparse
 import logging
 import time
@@ -32,8 +33,24 @@ class ProgressFileWrapper(io.BufferedReader):
                 sys.stdout.flush()
         return chunk
 
-# Tracks the output path currently being written so Ctrl+C can clean up partial files
+# Tracks the output path currently being written so signals can clean up partial files
 _current_output_path = None
+
+def _cleanup_and_exit(signum, frame):
+    """Signal handler for SIGTERM and SIGINT: removes any partial output file and exits."""
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "Ctrl+C"
+    sys.stdout.write("\n")
+    logging.error(f"[!] Interrupted by user ({sig_name}). Cleaning up...")
+    if _current_output_path and os.path.exists(_current_output_path):
+        try:
+            os.remove(_current_output_path)
+            logging.error(f"    Removed partial file: {_current_output_path}")
+        except OSError:
+            pass
+    sys.exit(1)
+
+signal.signal(signal.SIGTERM, _cleanup_and_exit)
+signal.signal(signal.SIGINT, _cleanup_and_exit)
 
 def compress_file(input_path: str, output_path: str, compression_level: int):
     """Compresses a single file to .7z using py7zr."""
@@ -216,12 +233,7 @@ Examples:
                 results["failed"].append(filepath)
 
     except KeyboardInterrupt:
-        sys.stdout.write("\n")
-        logging.error("[!] Interrupted by user (Ctrl+C). Cleaning up...")
-        if _current_output_path and os.path.exists(_current_output_path):
-            os.remove(_current_output_path)
-            logging.error(f"    Removed partial file: {_current_output_path}")
-        sys.exit(1)
+        _cleanup_and_exit(signal.SIGINT, None)
 
     total_end_time = time.time()
     total_duration = total_end_time - total_start_time
