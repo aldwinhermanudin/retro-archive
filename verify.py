@@ -275,24 +275,23 @@ if __name__ == "__main__":
                     continue
                 try:
                     with py7zr.SevenZipFile(filepath, 'r') as zf:
-                        targets = []
-                        file_sizes = {}
-                        for zinfo in zf.list():
-                            if zinfo.is_directory or not zinfo.filename.lower().endswith(('.iso', '.bin')):
-                                continue
-                            targets.append(zinfo.filename)
-                            file_sizes[zinfo.filename] = zinfo.uncompressed
-                        
+                        targets = [
+                            zinfo.filename for zinfo in zf.list()
+                            if not zinfo.is_directory and zinfo.filename.lower().endswith(('.iso', '.bin'))
+                        ]
+
                         if not targets:
                             continue
-                            
-                        factory = HashWriterFactory(file_sizes)
+
                         logging.info(f"\n--- Verifying inside 7Z: {filepath} ---")
-                        zf.extractall(targets=targets, factory=factory)
-                        
-                        for target in targets:
+                        extracted = zf.read(targets)
+
+                        for target, bio in extracted.items():
                             logging.info(f"\nResults for 7Z target: {target}")
-                            hashes = factory.io_objects[target].get_hashes()
+                            bio.seek(0)
+                            file_size = bio.seek(0, 2)
+                            bio.seek(0)
+                            hashes = calculate_hashes_from_stream(bio, file_size, target)
                             process_match(f"{filepath}/{target}", hashes)
                 except py7zr.exceptions.Bad7zFile:
                     logging.error(f"[x] FAILED: Invalid 7z file -> {filepath}")
