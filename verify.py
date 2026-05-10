@@ -171,6 +171,13 @@ if __name__ == "__main__":
     
     log_handlers = [logging.StreamHandler(sys.stdout)]
     if args.log_file:
+        log_dir = os.path.dirname(os.path.abspath(args.log_file))
+        if not os.path.exists(log_dir):
+            try:
+                os.makedirs(log_dir)
+            except OSError as e:
+                print(f"Error: Could not create log directory '{log_dir}': {e}", file=sys.stderr)
+                sys.exit(1)
         log_handlers.append(logging.FileHandler(args.log_file, encoding='utf-8'))
         
     logging.basicConfig(
