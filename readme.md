@@ -11,14 +11,15 @@ A Python command-line tool designed to verify ROM and ISO files against official
 #### Features
 * **Multiple Verification Commands:** Includes `redump` for DAT-based verification and `integrity-check` for archive testing.
 * **Multiple Hashing Algorithms:** Calculates CRC32, MD5, and SHA-1 simultaneously for Redump verification.
-* **Memory Efficient:** Reads files (and ZIP contents) in 4MB chunks, allowing it to process large files without consuming excessive RAM.
+* **Memory Efficient:** Reads files and streams archive contents in 4MB chunks without extracting to disk.
 * **Batch Processing:** Scan a single file or an entire directory.
-* **Archive Support:** Verifies ROMs directly inside ZIP and 7z archives without extracting them to disk.
-* **No External System Dependencies:** Built entirely with Python. Uses the `py7zr` library for `.7z` support.
+* **Archive Support:** Verifies ROMs directly inside ZIP and 7Z archives without writing to disk.
+* **Signal Handling:** Gracefully handles Ctrl+C and SIGTERM with a clean exit message.
+* **No External System Dependencies:** Built entirely with Python. Uses `py7zr >= 1.0` for `.7z` support.
 
 #### Usage
 
-**Verify against a Redump DAT:**
+**Verify a single file against a Redump DAT:**
 ```bash
 python3 verify.py --file path/to/game.iso redump --dat path/to/redump.dat
 ```
@@ -28,6 +29,11 @@ python3 verify.py --file path/to/game.iso redump --dat path/to/redump.dat
 python3 verify.py --directory path/to/roms/ redump --dat path/to/redump.dat
 ```
 
+**Verify ROMs inside 7Z/ZIP archives against Redump:**
+```bash
+python3 verify.py --directory path/to/roms/ redump --dat path/to/redump.dat --archived-rom
+```
+
 **Check the integrity of archives in a directory:**
 ```bash
 python3 verify.py --directory path/to/roms/ integrity-check
@@ -35,7 +41,8 @@ python3 verify.py --directory path/to/roms/ integrity-check
 
 **Additional Options:**
 * `--log-file <path>`: Save the console output to a log file.
-* `--archived-rom`: (for `redump` command) Treat ZIP/7z files as archives and verify the ROMs inside them directly.
+* `--log-level <LEVEL>`: Set the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`.
+* `--archived-rom`: (for `redump` command) Treat ZIP/7z files as archives and verify the ROMs inside them directly, without extracting to disk.
 * `--result <path>`: (for `redump` command) Output a JSON file mapping verified and failed filenames to their SHA-1 hashes.
 
 ---
@@ -46,9 +53,12 @@ A Python script to compress files into the highly efficient `.7z` archive format
 #### Features
 * **Batch Compression:** Compress a single file or an entire directory automatically.
 * **Custom File Types:** Use `--file-type` to specify which files to compress when scanning a directory (e.g. `.iso .bin`). If omitted, all files in the directory will be compressed (existing `.7z` archives are automatically ignored).
+* **Integrity Check on Existing Archives:** If an output `.7z` already exists, it is tested for integrity before being skipped. Corrupted archives are automatically overwritten.
 * **Space Saving:** Automatically delete the original file after successful compression using the `--delete` flag.
+* **Live Progress:** Displays a live progress bar during compression.
 * **JSON Statistics:** Generate detailed JSON reports containing compression ratios, bytes saved, and time taken using the `--result` flag.
 * **Configurable:** Customize compression levels and output directories.
+* **Signal Handling:** Gracefully handles Ctrl+C and SIGTERM, deleting any partial `.7z` file before exiting.
 
 #### Requirements
 * Requires the `py7zr` Python package (`pip install py7zr`).
@@ -65,6 +75,11 @@ python3 compress.py --file /path/to/game.iso
 python3 compress.py --directory /path/to/isos --delete --file-type .iso .bin
 ```
 
+**Compress all files in a directory:**
+```bash
+python3 compress.py --directory /path/to/isos
+```
+
 **Specify maximum compression (9) and a custom output directory:**
 ```bash
 python3 compress.py --directory /path/to/isos --level 9 --output-dir /path/to/output
@@ -76,6 +91,6 @@ python3 compress.py --directory /path/to/isos --result compression_stats.json
 ```
 
 ## System Requirements
-* Python 3.6 or higher
-* Required: `py7zr` package for `.7z` verification and compression support (`pip install -r requirements.txt`)
+* Python 3.10 or higher
+* Required: `py7zr >= 1.0` for `.7z` verification and compression support (`pip install -r requirements.txt`)
 * Tested in Python 3.12+ and 3.14
