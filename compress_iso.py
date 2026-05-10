@@ -5,6 +5,7 @@ import argparse
 import logging
 import subprocess
 import time
+import json
 
 __version__ = "0.1.0"
 
@@ -47,17 +48,17 @@ def compress_file(input_path: str, output_path: str, sevenzip_path: str, compres
             h, m = divmod(m, 60)
             time_str = f"{int(h)}h {int(m)}m {int(s)}s" if h > 0 else f"{int(m)}m {int(s)}s"
             logging.info(f"\n[✓] Successfully compressed: {os.path.basename(output_path)} in {time_str}")
-            return True
+            return True, duration
         else:
             logging.error(f"\n[x] Failed to compress: {os.path.basename(input_path)} (Return code: {process.returncode})")
-            return False
+            return False, 0
             
     except FileNotFoundError:
         logging.error(f"\n[x] Error: '7z' executable not found at '{sevenzip_path}'. Please install it (e.g., 'sudo apt install p7zip-full') or provide the path.")
         sys.exit(1)
     except Exception as e:
         logging.error(f"\n[x] An error occurred: {e}")
-        return False
+        return False, 0
 
 if __name__ == "__main__":
     desc = "Compress .iso files to .7z using 7zip."
@@ -87,6 +88,7 @@ Examples:
     parser.add_argument("--7zip", dest="sevenzip", help="Path to the 7z executable (default: 7z)", default="7z")
     parser.add_argument("--level", type=int, choices=range(0, 10), default=5, help="Compression level from 0 (store) to 9 (ultra). Default is 5.")
     parser.add_argument("--delete", action="store_true", help="Delete the original .iso file after successful compression.")
+    parser.add_argument("--result", help="Path to output a JSON file containing compression statistics", required=False)
     parser.add_argument("--log-file", help="Path to a log file to save the output", required=False)
     parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
     
@@ -148,9 +150,23 @@ Examples:
             logging.warning(f"Output file already exists, skipping: {output_path}")
             continue
             
-        success = compress_file(filepath, output_path, args.sevenzip, args.level)
+        original_size = os.path.getsize(filepath)
+        success, duration = compress_file(filepath, output_path, args.sevenzip, args.level)
+        
         if success:
-            results["success"].append(filepath)
+            compressed_size = os.path.getsize(output_path)
+            bytes_saved = original_size - compressed_size
+            compression_ratio = compressed_size / original_size if original_size > 0 else 0
+            
+            results["success"].append({
+                "file": filepath,
+                "output": output_path,
+                "compression_time_seconds": round(duration, 2),
+                "original_size_bytes": original_size,
+                "compressed_size_bytes": compressed_size,
+                "bytes_saved": bytes_saved,
+                "compression_ratio": round(compression_ratio, 4)
+            })
             if args.delete:
                 try:
                     os.remove(filepath)
@@ -178,3 +194,43 @@ Examples:
         logging.info("\nFailed Files:")
         for f in results['failed']:
             logging.info(f"  - {f}")
+
+    if args.result:
+        total_original_size = sum(item["original_size_bytes"] for item in results["success"])
+        total_compressed_size = sum(item["compressed_size_bytes"] for item in results["success"])
+        total_bytes_saved = sum(item["bytes_saved"] for item in results["success"])
+        total_compression_time = sum(item["compression_time_seconds"] for item in results["success"])
+        
+        num_success = len(results["success"])
+        avg_original_size = total_original_size / num_success if num_success else 0
+        avg_compressed_size = total_compressed_size / num_success if num_success else 0
+        avg_bytes_saved = total_bytes_saved / num_success if num_success else 0
+        avg_compression_time = total_compression_time / num_success if num_success else 0
+        avg_compression_ratio = total_compressed_size / total_original_size if total_original_size > 0 else 0
+        
+        json_output = {
+            "overview": {
+                "total_files_processed": len(files_to_compress),
+                "successful": num_success,
+                "failed": len(results["failed"]),
+                "total_original_size_bytes": total_original_size,
+                "total_compressed_size_bytes": total_compressed_size,
+                "total_bytes_saved": total_bytes_saved,
+                "overall_compression_ratio": round(avg_compression_ratio, 4),
+                "total_compression_time_seconds": round(total_compression_time, 2),
+                "average_metrics_per_file": {
+                    "original_size_bytes": round(avg_original_size, 2),
+                    "compressed_size_bytes": round(avg_compressed_size, 2),
+                    "bytes_saved": round(avg_bytes_saved, 2),
+                    "compression_time_seconds": round(avg_compression_time, 2)
+                }
+            },
+            "files": results["success"],
+            "failed_files": results["failed"]
+        }
+        try:
+            with open(args.result, "w", encoding="utf-8") as f:
+                json.dump(json_output, f, indent=4)
+            logging.info(f"\nSaved JSON results to: {args.result}")
+        except Exception as e:
+            logging.error(f"\nFailed to save JSON results: {e}")

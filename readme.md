@@ -43,6 +43,7 @@ A Python script to compress `.iso` files into the highly efficient `.7z` archive
 * **Batch Compression:** Compress a single `.iso` or an entire directory automatically.
 * **Space Saving:** Automatically delete the original `.iso` file after successful compression using the `--delete` flag.
 * **Live Progress:** Streams 7-Zip's native progress percentage directly to your terminal.
+* **JSON Statistics:** Generate detailed JSON reports containing compression ratios, bytes saved, and time taken using the `--result` flag.
 * **Configurable:** Customize compression levels and output directories.
 
 #### Requirements
@@ -63,6 +64,11 @@ python compress_iso.py --directory /path/to/isos --delete
 **Specify maximum compression (9) and a custom output directory:**
 ```bash
 python compress_iso.py --directory /path/to/isos --level 9 --output-dir /path/to/output
+```
+
+**Generate a JSON statistics report of the compression batch:**
+```bash
+python compress_iso.py --directory /path/to/isos --result compression_stats.json
 ```
 
 ## System Requirements
