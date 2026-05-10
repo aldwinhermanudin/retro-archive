@@ -2,6 +2,7 @@
 import os
 import sys
 import zlib
+import signal
 import hashlib
 import argparse
 import logging
@@ -121,6 +122,15 @@ def check_redump_dat(dat_root, file_hashes: dict) -> dict:
                 }
                 
     return None
+
+def _handle_signal(signum, frame):
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "Ctrl+C"
+    sys.stdout.write("\n")
+    logging.error(f"[!] Interrupted by user ({sig_name}). Exiting...")
+    sys.exit(1)
+
+signal.signal(signal.SIGTERM, _handle_signal)
+signal.signal(signal.SIGINT, _handle_signal)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Verify ROMs/ISOs.")
