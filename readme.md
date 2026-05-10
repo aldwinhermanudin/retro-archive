@@ -35,7 +35,7 @@ python3 verify.py --directory path/to/roms/ integrity-check
 
 **Additional Options:**
 * `--log-file <path>`: Save the console output to a log file.
-* `--zipped-rom`: (for `redump` command) Treat ZIP/7z files as archives and verify the ROMs inside them directly.
+* `--archived-rom`: (for `redump` command) Treat ZIP/7z files as archives and verify the ROMs inside them directly.
 * `--result <path>`: (for `redump` command) Output a JSON file mapping verified and failed filenames to their SHA-1 hashes.
 
 ---

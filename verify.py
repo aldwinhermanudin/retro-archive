@@ -137,7 +137,7 @@ if __name__ == "__main__":
     redump_parser = subparsers.add_parser('redump', help="Verify a ROM/ISO against a Redump DAT file")
     redump_parser.add_argument("--dat", help="Path to the Redump .dat (XML) file", required=False)
     redump_parser.add_argument("--result", help="Path to output a JSON file containing verified and failed filenames with their SHA-1 hashes", required=False)
-    redump_parser.add_argument("--zipped-rom", action="store_true", help="Treat files as ZIP/7z archives and verify their contents", required=False)
+    redump_parser.add_argument("--archived-rom", action="store_true", help="Treat files as ZIP/7z archives and verify their contents", required=False)
     
     integrity_parser = subparsers.add_parser('integrity-check', help="Check integrity of ZIP and 7Z archives")
     
@@ -267,7 +267,7 @@ if __name__ == "__main__":
     for filepath in files_to_verify:
         is_zip = filepath.lower().endswith('.zip')
         is_7z = filepath.lower().endswith('.7z')
-        if args.zipped_rom and (is_zip or is_7z):
+        if args.archived_rom and (is_zip or is_7z):
             if is_7z:
                 if not HAS_PY7ZR:
                     logging.error(f"[x] FAILED: py7zr module is required for .7z files. Install with 'pip install py7zr'")
