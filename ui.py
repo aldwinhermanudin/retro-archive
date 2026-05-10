@@ -215,13 +215,28 @@ class RetroArchiveUI(tk.Tk):
 
         def _worker():
             try:
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1
+                    env=env
                 )
                 self._running_process = proc
-                for line in proc.stdout:
-                    self.after(0, self.append_output, line.rstrip())
+                buf = b""
+                while True:
+                    byte = proc.stdout.read(1)
+                    if not byte:
+                        break
+                    if byte in (b"\n", b"\r"):
+                        line = buf.decode("utf-8", errors="replace")
+                        is_cr = (byte == b"\r")
+                        self.after(0, self._append_line, line, is_cr)
+                        buf = b""
+                    else:
+                        buf += byte
+                if buf:
+                    line = buf.decode("utf-8", errors="replace")
+                    self.after(0, self._append_line, line, False)
                 proc.wait()
                 rc = proc.returncode
             except Exception as e:
@@ -232,6 +247,18 @@ class RetroArchiveUI(tk.Tk):
                 self.after(0, self._on_process_done, rc, on_finish)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _append_line(self, line: str, is_progress: bool):
+        """Append a line. If is_progress (\\r), overwrite the last line."""
+        if is_progress and line.strip():
+            # Overwrite previous progress line
+            self.output_text.configure(state="normal")
+            self.output_text.delete("end-2l linestart", "end-1l lineend")
+            self.output_text.insert("end-1l lineend", "\n" + line, "dim")
+            self.output_text.see("end")
+            self.output_text.configure(state="disabled")
+        else:
+            self.append_output(line)
 
     def stop_command(self):
         if self._running_process:
