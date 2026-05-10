@@ -90,6 +90,25 @@ python3 compress.py --directory /path/to/isos --level 9 --output-dir /path/to/ou
 python3 compress.py --directory /path/to/isos --result compression_stats.json
 ```
 
+### 3. `ui.py`
+A graphical user interface built with Python's built-in `tkinter` that wraps the functionality of `compress.py` and `verify.py`.
+
+#### Features
+* **Cross-Platform UI:** Works on Windows, macOS, and Linux without requiring additional UI frameworks.
+* **Unified Interface:** Tabbed interface to access both Compression and Verification tools in one place.
+* **Direct Integration:** Imports and executes batch processing functions directly from the core tools, eliminating subprocess overhead.
+* **Real-time Logging:** Intercepts standard output and logging calls to display command-line progress bars and logs directly in a scrolling text widget.
+* **Non-blocking Execution:** Runs operations in background threads to keep the UI responsive during long-running tasks.
+
+#### Usage
+
+Launch the graphical interface:
+```bash
+python3 ui.py
+```
+
+---
+
 ## System Requirements
 * Python 3.10 or higher
 * Required: `py7zr >= 1.0` for `.7z` verification and compression support (`pip install -r requirements.txt`)
