@@ -14,6 +14,25 @@ except ImportError:
 
 __version__ = "0.1.0"
 
+import io
+
+class ProgressFileWrapper(io.BufferedReader):
+    def __init__(self, raw, size, filename):
+        super().__init__(raw)
+        self._size = size
+        self._processed = 0
+        self._filename = filename
+
+    def read(self, size=-1):
+        chunk = super().read(size)
+        if chunk:
+            self._processed += len(chunk)
+            if self._size > 0:
+                percent = (self._processed / self._size) * 100
+                sys.stdout.write(f"\rProgress [{self._filename}]: [{percent:.1f}%] {self._processed/(1024*1024):.1f}MB")
+                sys.stdout.flush()
+        return chunk
+
 def compress_file(input_path: str, output_path: str, compression_level: int):
     """Compresses a single file to .7z using py7zr."""
     logging.info(f"Compressing {input_path} to {output_path} (level {compression_level})...")
@@ -24,8 +43,15 @@ def compress_file(input_path: str, output_path: str, compression_level: int):
         # Determine preset based on compression level (0-9)
         filters = [{'id': py7zr.FILTER_LZMA2, 'preset': compression_level}]
         
+        file_size = os.path.getsize(input_path)
+        filename = os.path.basename(input_path)
+        
         with py7zr.SevenZipFile(output_path, 'w', filters=filters) as archive:
-            archive.write(input_path, arcname=os.path.basename(input_path))
+            with open(input_path, 'rb') as f:
+                wrapped_f = ProgressFileWrapper(f.raw, file_size, filename)
+                archive.writef(wrapped_f, arcname=filename)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
             
         end_time = time.time()
         duration = end_time - start_time
