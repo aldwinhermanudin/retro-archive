@@ -3,61 +3,47 @@ import os
 import sys
 import argparse
 import logging
-import subprocess
 import time
 import json
 
+try:
+    import py7zr
+except ImportError:
+    print("Error: 'py7zr' module not found. Please activate your venv (e.g. source ~/Developments/venv/bin/activate) or 'pip install py7zr'.", file=sys.stderr)
+    sys.exit(1)
+
 __version__ = "0.1.0"
 
-def compress_file(input_path: str, output_path: str, sevenzip_path: str, compression_level: int):
-    """Compresses a single .iso file to .7z using 7zip."""
-    # -t7z: format 7z
-    # -mx=<level>: compression level (0-9)
-    # -bsp1: force progress output to stdout
-    cmd = [
-        sevenzip_path, 
-        "a", 
-        "-t7z", 
-        f"-mx={compression_level}", 
-        "-bsp1", 
-        output_path, 
-        input_path
-    ]
-    logging.info(f"Running: {' '.join(cmd)}")
+def compress_file(input_path: str, output_path: str, compression_level: int):
+    """Compresses a single .iso file to .7z using py7zr."""
+    logging.info(f"Compressing {input_path} to {output_path} (level {compression_level})...")
     
     try:
         start_time = time.time()
-        # Run 7z and stream output
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True
-        )
         
-        for line in process.stdout:
-            sys.stdout.write(line)
-            sys.stdout.flush()
+        # Determine preset based on compression level (0-9)
+        filters = [{'id': py7zr.FILTER_LZMA2, 'preset': compression_level}]
+        
+        with py7zr.SevenZipFile(output_path, 'w', filters=filters) as archive:
+            archive.write(input_path, arcname=os.path.basename(input_path))
             
-        process.wait()
         end_time = time.time()
+        duration = end_time - start_time
         
-        if process.returncode == 0:
-            duration = end_time - start_time
-            m, s = divmod(duration, 60)
-            h, m = divmod(m, 60)
-            time_str = f"{int(h)}h {int(m)}m {int(s)}s" if h > 0 else f"{int(m)}m {int(s)}s"
-            logging.info(f"\n[✓] Successfully compressed: {os.path.basename(output_path)} in {time_str}")
-            return True, duration
-        else:
-            logging.error(f"\n[x] Failed to compress: {os.path.basename(input_path)} (Return code: {process.returncode})")
-            return False, 0
+        m, s = divmod(duration, 60)
+        h, m = divmod(m, 60)
+        time_str = f"{int(h)}h {int(m)}m {int(s)}s" if h > 0 else f"{int(m)}m {int(s)}s"
+        logging.info(f"\n[✓] Successfully compressed: {os.path.basename(output_path)} in {time_str}")
+        return True, duration
             
-    except FileNotFoundError:
-        logging.error(f"\n[x] Error: '7z' executable not found at '{sevenzip_path}'. Please install it (e.g., 'sudo apt install p7zip-full') or provide the path.")
-        sys.exit(1)
     except Exception as e:
         logging.error(f"\n[x] An error occurred: {e}")
+        # Clean up output file if it was partially written
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
         return False, 0
 
 if __name__ == "__main__":
@@ -85,7 +71,7 @@ Examples:
     group.add_argument("--directory", help="Path to a directory containing .iso files to compress")
     
     parser.add_argument("--output-dir", help="Path to the output directory for .7z files (defaults to same as input)", required=False)
-    parser.add_argument("--7zip", dest="sevenzip", help="Path to the 7z executable (default: 7z)", default="7z")
+
     parser.add_argument("--level", type=int, choices=range(0, 10), default=5, help="Compression level from 0 (store) to 9 (ultra). Default is 5.")
     parser.add_argument("--delete", action="store_true", help="Delete the original .iso file after successful compression.")
     parser.add_argument("--result", help="Path to output a JSON file containing compression statistics", required=False)
@@ -151,7 +137,7 @@ Examples:
             continue
             
         original_size = os.path.getsize(filepath)
-        success, duration = compress_file(filepath, output_path, args.sevenzip, args.level)
+        success, duration = compress_file(filepath, output_path, args.level)
         
         if success:
             compressed_size = os.path.getsize(output_path)
