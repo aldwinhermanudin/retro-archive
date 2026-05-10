@@ -123,18 +123,32 @@ def check_redump_dat(dat_root, file_hashes: dict) -> dict:
     return None
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Verify a ROM/ISO against a Redump DAT file.")
+    parser = argparse.ArgumentParser(description="Verify ROMs/ISOs.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--file", help="Path to a single file (.iso/.bin/.zip) to verify")
-    group.add_argument("--directory", help="Path to a directory containing files to verify")
-    parser.add_argument("--dat", help="Path to the Redump .dat (XML) file", required=False)
-    parser.add_argument("--result", help="Path to output a JSON file containing verified and failed filenames with their SHA-1 hashes", required=False)
-    parser.add_argument("--zipped-rom", action="store_true", help="Treat files as ZIP/7z archives and verify their contents", required=False)
     parser.add_argument("--log-file", help="Path to a log file to save the output", required=False)
     parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
     
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--file", help="Path to a single file (.iso/.bin/.zip/.7z) to verify")
+    group.add_argument("--directory", help="Path to a directory containing files to verify")
+    
+    subparsers = parser.add_subparsers(dest='command', required=True, help="Verification commands")
+    
+    redump_parser = subparsers.add_parser('redump', help="Verify a ROM/ISO against a Redump DAT file")
+    redump_parser.add_argument("--dat", help="Path to the Redump .dat (XML) file", required=False)
+    redump_parser.add_argument("--result", help="Path to output a JSON file containing verified and failed filenames with their SHA-1 hashes", required=False)
+    redump_parser.add_argument("--zipped-rom", action="store_true", help="Treat files as ZIP/7z archives and verify their contents", required=False)
+    
+    integrity_parser = subparsers.add_parser('integrity-check', help="Check integrity of ZIP and 7Z archives")
+    
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+        
     args = parser.parse_args()
+
+    if args.command not in ['redump', 'integrity-check']:
+        sys.exit(0)
     
     log_handlers = [logging.StreamHandler(sys.stdout)]
     if args.log_file:
@@ -158,12 +172,66 @@ if __name__ == "__main__":
             sys.exit(1)
         for root_dir, _, files in os.walk(args.directory):
             for f in files:
-                if f.lower().endswith(('.iso', '.zip', '.bin', '.7z')):
-                    files_to_verify.append(os.path.join(root_dir, f))
+                if args.command == 'integrity-check':
+                    if f.lower().endswith(('.zip', '.7z')):
+                        files_to_verify.append(os.path.join(root_dir, f))
+                else:
+                    if f.lower().endswith(('.iso', '.zip', '.bin', '.7z')):
+                        files_to_verify.append(os.path.join(root_dir, f))
                     
     if not files_to_verify:
-        logging.info("No valid files (.iso, .zip, .bin, .7z) found to verify.")
+        logging.info("No valid files found to verify.")
         sys.exit(0)
+        
+    if args.command == 'integrity-check':
+        results = {"healthy": [], "corrupted": []}
+        for filepath in files_to_verify:
+            logging.info(f"\n--- Checking Integrity: {filepath} ---")
+            is_zip = filepath.lower().endswith('.zip')
+            is_7z = filepath.lower().endswith('.7z')
+            
+            if is_zip:
+                try:
+                    with zipfile.ZipFile(filepath, 'r') as zf:
+                        bad_file = zf.testzip()
+                        if bad_file is not None:
+                            logging.error(f"[x] CORRUPTED: Bad file found inside ZIP: {bad_file}")
+                            results["corrupted"].append({"file": filepath, "reason": f"Bad file: {bad_file}"})
+                        else:
+                            logging.info("[✓] HEALTHY: ZIP archive is intact.")
+                            results["healthy"].append(filepath)
+                except zipfile.BadZipFile:
+                    logging.error(f"[x] CORRUPTED: Invalid ZIP file -> {filepath}")
+                    results["corrupted"].append({"file": filepath, "reason": "BadZipFile"})
+                    
+            elif is_7z:
+                if not HAS_PY7ZR:
+                    logging.error(f"[x] SKIPPED: py7zr module is required for .7z files. Install with 'pip install py7zr'")
+                    continue
+                try:
+                    with py7zr.SevenZipFile(filepath, 'r') as zf:
+                        zf.test()
+                    logging.info("[✓] HEALTHY: 7Z archive is intact.")
+                    results["healthy"].append(filepath)
+                except py7zr.exceptions.Bad7zFile:
+                    logging.error(f"[x] CORRUPTED: Invalid 7z file -> {filepath}")
+                    results["corrupted"].append({"file": filepath, "reason": "Bad7zFile"})
+                except Exception as e:
+                    logging.error(f"[x] CORRUPTED: Error testing 7z file -> {e}")
+                    results["corrupted"].append({"file": filepath, "reason": str(e)})
+
+        logging.info("\n" + "=" * 40)
+        logging.info("INTEGRITY CHECK OVERVIEW")
+        logging.info("=" * 40)
+        logging.info(f"Total archives checked: {len(files_to_verify)}")
+        logging.info(f"Healthy archives:       {len(results['healthy'])}")
+        logging.info(f"Corrupted archives:     {len(results['corrupted'])}")
+        if results['corrupted']:
+            logging.info("\nCorrupted Files:")
+            for f in results['corrupted']:
+                logging.info(f"  - {f['file']} ({f['reason']})")
+                
+        sys.exit(0 if not results['corrupted'] else 1)
         
     dat_root = None
     if args.dat:
