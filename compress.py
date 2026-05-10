@@ -167,8 +167,19 @@ Examples:
             output_path = os.path.join(os.path.dirname(filepath), output_filename)
             
         if os.path.exists(output_path):
-            logging.warning(f"Output file already exists, skipping: {output_path}")
-            continue
+            logging.info(f"Output file already exists, checking integrity: {output_path}")
+            is_corrupted = False
+            try:
+                with py7zr.SevenZipFile(output_path, 'r') as zf:
+                    zf.test()
+            except Exception as e:
+                is_corrupted = True
+                
+            if not is_corrupted:
+                logging.info(f"[✓] Existing archive is healthy, skipping: {output_path}")
+                continue
+            else:
+                logging.warning(f"[x] Existing archive is corrupted, overwriting: {output_path}")
             
         original_size = os.path.getsize(filepath)
         success, duration = compress_file(filepath, output_path, args.level)
