@@ -141,6 +141,155 @@ def _handle_signal(signum, frame):
 signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT, _handle_signal)
 
+def run_integrity_check(files_to_verify):
+    if not files_to_verify:
+        logging.info("No valid files found to verify.")
+        return {"healthy": [], "corrupted": []}
+
+    results = {"healthy": [], "corrupted": []}
+    for filepath in files_to_verify:
+        logging.info(f"\n--- Checking Integrity: {filepath} ---")
+        is_zip = filepath.lower().endswith('.zip')
+        is_7z = filepath.lower().endswith('.7z')
+        
+        if is_zip:
+            try:
+                with zipfile.ZipFile(filepath, 'r') as zf:
+                    bad_file = zf.testzip()
+                    if bad_file is not None:
+                        logging.error(f"[x] CORRUPTED: Bad file found inside ZIP: {bad_file}")
+                        results["corrupted"].append({"file": filepath, "reason": f"Bad file: {bad_file}"})
+                    else:
+                        logging.info("[✓] HEALTHY: ZIP archive is intact.")
+                        results["healthy"].append(filepath)
+            except zipfile.BadZipFile:
+                logging.error(f"[x] CORRUPTED: Invalid ZIP file -> {filepath}")
+                results["corrupted"].append({"file": filepath, "reason": "BadZipFile"})
+                
+        elif is_7z:
+            if not HAS_PY7ZR:
+                logging.error(f"[x] SKIPPED: py7zr module is required for .7z files. Install with 'pip install py7zr'")
+                continue
+            try:
+                with py7zr.SevenZipFile(filepath, 'r') as zf:
+                    zf.test()
+                logging.info("[✓] HEALTHY: 7Z archive is intact.")
+                results["healthy"].append(filepath)
+            except py7zr.exceptions.Bad7zFile:
+                logging.error(f"[x] CORRUPTED: Invalid 7z file -> {filepath}")
+                results["corrupted"].append({"file": filepath, "reason": "Bad7zFile"})
+            except Exception as e:
+                logging.error(f"[x] CORRUPTED: Error testing 7z file -> {e}")
+                results["corrupted"].append({"file": filepath, "reason": str(e)})
+
+    logging.info("\n" + "=" * 40)
+    logging.info("INTEGRITY CHECK OVERVIEW")
+    logging.info("=" * 40)
+    logging.info(f"Total archives checked: {len(files_to_verify)}")
+    logging.info(f"Healthy archives:       {len(results['healthy'])}")
+    logging.info(f"Corrupted archives:     {len(results['corrupted'])}")
+    if results['corrupted']:
+        logging.info("\nCorrupted Files:")
+        for f in results['corrupted']:
+            logging.info(f"  - {f['file']} ({f['reason']})")
+            
+    return results
+
+def run_redump_check(files_to_verify, dat_root, archived_rom):
+    if not files_to_verify:
+        logging.info("No valid files found to verify.")
+        return {"matched": [], "failed": [], "unverified": []}
+
+    results = {"matched": [], "failed": [], "unverified": []}
+
+    def process_match(filepath_display, file_hashes):
+        logging.info(f"CRC32: {file_hashes['crc32']}")
+        logging.info(f"MD5:   {file_hashes['md5']}")
+        logging.info(f"SHA-1: {file_hashes['sha1']}")
+        logging.info("-" * 40)
+        
+        if dat_root is not None:
+            match = check_redump_dat(dat_root, file_hashes)
+            if match:
+                logging.info("[✓] VERIFIED: Perfect match found in Redump database!")
+                logging.info(f"Game: {match['game_name']}")
+                logging.info(f"ROM:  {match['rom_name']}")
+                results["matched"].append({"file": filepath_display, "sha1": file_hashes['sha1']})
+            else:
+                logging.info("[x] FAILED: No match found in the provided DAT file. This might be a bad dump.")
+                results["failed"].append({"file": filepath_display, "sha1": file_hashes['sha1'], "reason": "NO_MATCH"})
+        else:
+            results["unverified"].append(filepath_display)
+
+    for filepath in files_to_verify:
+        is_zip = filepath.lower().endswith('.zip')
+        is_7z = filepath.lower().endswith('.7z')
+        if archived_rom and (is_zip or is_7z):
+            if is_7z:
+                if not HAS_PY7ZR:
+                    logging.error(f"[x] FAILED: py7zr module is required for .7z files. Install with 'pip install py7zr'")
+                    results["failed"].append({"file": filepath, "sha1": "", "reason": "MISSING_PY7ZR"})
+                    continue
+                try:
+                    with py7zr.SevenZipFile(filepath, 'r') as zf:
+                        all_files = zf.list()
+                        targets = [
+                            zinfo.filename for zinfo in all_files
+                            if not zinfo.is_directory and zinfo.filename.lower().endswith(('.iso', '.bin'))
+                        ]
+                        file_sizes = {
+                            zinfo.filename: zinfo.uncompressed for zinfo in all_files
+                            if zinfo.filename in targets
+                        }
+
+                        if not targets:
+                            continue
+
+                        logging.info(f"\n--- Verifying inside 7Z: {filepath} ---")
+                        factory = HashWriterFactory(file_sizes)
+                        zf.extractall(factory=factory)
+                        for target in targets:
+                            if target not in factory.io_objects:
+                                continue
+                            logging.info(f"\nResults for 7Z target: {target}")
+                            hashes = factory.io_objects[target].get_hashes()
+                            process_match(f"{filepath}/{target}", hashes)
+
+                except py7zr.exceptions.Bad7zFile:
+                    logging.error(f"[x] FAILED: Invalid 7z file -> {filepath}")
+                    results["failed"].append({"file": filepath, "sha1": "", "reason": "INVALID_7Z"})
+            elif is_zip:
+                try:
+                    with zipfile.ZipFile(filepath, 'r') as zf:
+                        for zinfo in zf.infolist():
+                            if zinfo.is_dir() or not zinfo.filename.lower().endswith(('.iso', '.bin')):
+                                continue
+                            logging.info(f"\n--- Verifying inside ZIP: {filepath} -> {zinfo.filename} ---")
+                            with zf.open(zinfo) as f:
+                                hashes = calculate_hashes_from_stream(f, zinfo.file_size, zinfo.filename)
+                            process_match(f"{filepath}/{zinfo.filename}", hashes)
+                except zipfile.BadZipFile:
+                    logging.error(f"[x] FAILED: Invalid ZIP file -> {filepath}")
+                    results["failed"].append({"file": filepath, "sha1": "", "reason": "INVALID_ZIP"})
+        else:
+            logging.info(f"\n--- Verifying: {filepath} ---")
+            hashes = calculate_hashes(filepath)
+            process_match(filepath, hashes)
+
+    logging.info("\n" + "=" * 40)
+    logging.info("VERIFICATION OVERVIEW")
+    logging.info("=" * 40)
+    logging.info(f"Total files processed: {len(files_to_verify)}")
+    if dat_root is not None:
+        logging.info(f"Successfully verified: {len(results['matched'])}")
+        logging.info(f"Failed verification:   {len(results['failed'])}")
+        if results['failed']:
+            logging.info("\nFailed Files:")
+            for f in results['failed']:
+                logging.info(f"  - {f['file']}")
+
+    return results
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Verify ROMs/ISOs.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -208,155 +357,25 @@ if __name__ == "__main__":
     if not files_to_verify:
         logging.info("No valid files found to verify.")
         sys.exit(0)
-        
+
     if args.command == 'integrity-check':
-        results = {"healthy": [], "corrupted": []}
-        for filepath in files_to_verify:
-            logging.info(f"\n--- Checking Integrity: {filepath} ---")
-            is_zip = filepath.lower().endswith('.zip')
-            is_7z = filepath.lower().endswith('.7z')
-            
-            if is_zip:
-                try:
-                    with zipfile.ZipFile(filepath, 'r') as zf:
-                        bad_file = zf.testzip()
-                        if bad_file is not None:
-                            logging.error(f"[x] CORRUPTED: Bad file found inside ZIP: {bad_file}")
-                            results["corrupted"].append({"file": filepath, "reason": f"Bad file: {bad_file}"})
-                        else:
-                            logging.info("[✓] HEALTHY: ZIP archive is intact.")
-                            results["healthy"].append(filepath)
-                except zipfile.BadZipFile:
-                    logging.error(f"[x] CORRUPTED: Invalid ZIP file -> {filepath}")
-                    results["corrupted"].append({"file": filepath, "reason": "BadZipFile"})
-                    
-            elif is_7z:
-                if not HAS_PY7ZR:
-                    logging.error(f"[x] SKIPPED: py7zr module is required for .7z files. Install with 'pip install py7zr'")
-                    continue
-                try:
-                    with py7zr.SevenZipFile(filepath, 'r') as zf:
-                        zf.test()
-                    logging.info("[✓] HEALTHY: 7Z archive is intact.")
-                    results["healthy"].append(filepath)
-                except py7zr.exceptions.Bad7zFile:
-                    logging.error(f"[x] CORRUPTED: Invalid 7z file -> {filepath}")
-                    results["corrupted"].append({"file": filepath, "reason": "Bad7zFile"})
-                except Exception as e:
-                    logging.error(f"[x] CORRUPTED: Error testing 7z file -> {e}")
-                    results["corrupted"].append({"file": filepath, "reason": str(e)})
-
-        logging.info("\n" + "=" * 40)
-        logging.info("INTEGRITY CHECK OVERVIEW")
-        logging.info("=" * 40)
-        logging.info(f"Total archives checked: {len(files_to_verify)}")
-        logging.info(f"Healthy archives:       {len(results['healthy'])}")
-        logging.info(f"Corrupted archives:     {len(results['corrupted'])}")
-        if results['corrupted']:
-            logging.info("\nCorrupted Files:")
-            for f in results['corrupted']:
-                logging.info(f"  - {f['file']} ({f['reason']})")
-                
-        sys.exit(0 if not results['corrupted'] else 1)
-        
-    dat_root = None
-    if args.dat:
-        logging.info(f"Loading Redump database: {args.dat}...")
-        try:
-            tree = ET.parse(args.dat)
-            dat_root = tree.getroot()
-        except ET.ParseError as e:
-            logging.error(f"Error parsing DAT file: {e}")
+        results = run_integrity_check(files_to_verify)
+        if results.get('corrupted'):
             sys.exit(1)
-            
-    results = {"matched": [], "failed": [], "unverified": []}
+        sys.exit(0)
 
-    def process_match(filepath_display, file_hashes):
-        logging.info(f"CRC32: {file_hashes['crc32']}")
-        logging.info(f"MD5:   {file_hashes['md5']}")
-        logging.info(f"SHA-1: {file_hashes['sha1']}")
-        logging.info("-" * 40)
+    elif args.command == 'redump':
+        dat_root = None
+        if args.dat:
+            logging.info(f"Loading Redump database: {args.dat}...")
+            try:
+                tree = ET.parse(args.dat)
+                dat_root = tree.getroot()
+            except ET.ParseError as e:
+                logging.error(f"Error parsing DAT file: {e}")
+                sys.exit(1)
         
-        if dat_root is not None:
-            match = check_redump_dat(dat_root, file_hashes)
-            if match:
-                logging.info("[✓] VERIFIED: Perfect match found in Redump database!")
-                logging.info(f"Game: {match['game_name']}")
-                logging.info(f"ROM:  {match['rom_name']}")
-                results["matched"].append({"file": filepath_display, "sha1": file_hashes['sha1']})
-            else:
-                logging.info("[x] FAILED: No match found in the provided DAT file. This might be a bad dump.")
-                results["failed"].append({"file": filepath_display, "sha1": file_hashes['sha1'], "reason": "NO_MATCH"})
-        else:
-            results["unverified"].append(filepath_display)
-
-    for filepath in files_to_verify:
-        is_zip = filepath.lower().endswith('.zip')
-        is_7z = filepath.lower().endswith('.7z')
-        if args.archived_rom and (is_zip or is_7z):
-            if is_7z:
-                if not HAS_PY7ZR:
-                    logging.error(f"[x] FAILED: py7zr module is required for .7z files. Install with 'pip install py7zr'")
-                    results["failed"].append({"file": filepath, "sha1": "", "reason": "MISSING_PY7ZR"})
-                    continue
-                try:
-                    with py7zr.SevenZipFile(filepath, 'r') as zf:
-                        all_files = zf.list()
-                        targets = [
-                            zinfo.filename for zinfo in all_files
-                            if not zinfo.is_directory and zinfo.filename.lower().endswith(('.iso', '.bin'))
-                        ]
-                        file_sizes = {
-                            zinfo.filename: zinfo.uncompressed for zinfo in all_files
-                            if zinfo.filename in targets
-                        }
-
-                        if not targets:
-                            continue
-
-                        logging.info(f"\n--- Verifying inside 7Z: {filepath} ---")
-                        factory = HashWriterFactory(file_sizes)
-                        zf.extractall(factory=factory)
-                        for target in targets:
-                            if target not in factory.io_objects:
-                                continue
-                            logging.info(f"\nResults for 7Z target: {target}")
-                            hashes = factory.io_objects[target].get_hashes()
-                            process_match(f"{filepath}/{target}", hashes)
-
-                except py7zr.exceptions.Bad7zFile:
-                    logging.error(f"[x] FAILED: Invalid 7z file -> {filepath}")
-                    results["failed"].append({"file": filepath, "sha1": "", "reason": "INVALID_7Z"})
-            elif is_zip:
-                try:
-                    with zipfile.ZipFile(filepath, 'r') as zf:
-                        for zinfo in zf.infolist():
-                            if zinfo.is_dir() or not zinfo.filename.lower().endswith(('.iso', '.bin')):
-                                continue
-                            logging.info(f"\n--- Verifying inside ZIP: {filepath} -> {zinfo.filename} ---")
-                            with zf.open(zinfo) as f:
-                                hashes = calculate_hashes_from_stream(f, zinfo.file_size, zinfo.filename)
-                            process_match(f"{filepath}/{zinfo.filename}", hashes)
-                except zipfile.BadZipFile:
-                    logging.error(f"[x] FAILED: Invalid ZIP file -> {filepath}")
-                    results["failed"].append({"file": filepath, "sha1": "", "reason": "INVALID_ZIP"})
-        else:
-            logging.info(f"\n--- Verifying: {filepath} ---")
-            hashes = calculate_hashes(filepath)
-            process_match(filepath, hashes)
-
-    if args.directory:
-        logging.info("\n" + "=" * 40)
-        logging.info("VERIFICATION OVERVIEW")
-        logging.info("=" * 40)
-        logging.info(f"Total files processed: {len(files_to_verify)}")
-        if dat_root is not None:
-            logging.info(f"Successfully verified: {len(results['matched'])}")
-            logging.info(f"Failed verification:   {len(results['failed'])}")
-            if results['failed']:
-                logging.info("\nFailed Files:")
-                for f in results['failed']:
-                    logging.info(f"  - {f['file']}")
+        results = run_redump_check(files_to_verify, dat_root, args.archived_rom)
 
     if args.result:
         json_output = {

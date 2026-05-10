@@ -92,6 +92,101 @@ def compress_file(input_path: str, output_path: str, compression_level: int):
                 pass
         return False, 0
 
+def run_batch_compression(files_to_compress, output_dir, level, delete_orig):
+    if not files_to_compress:
+        logging.info("No valid files found to compress.")
+        return {"success": [], "failed": [], "total_time": 0}
+
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    results = {"success": [], "failed": []}
+    logging.info(f"Found {len(files_to_compress)} files to compress.")
+    total_start_time = time.time()
+
+    try:
+        for filepath in files_to_compress:
+            logging.info(f"\n--- Compressing: {filepath} ---")
+
+            filename = os.path.basename(filepath)
+            name, _ = os.path.splitext(filename)
+            output_filename = f"{name}.7z"
+
+            if output_dir:
+                output_path = os.path.join(output_dir, output_filename)
+            else:
+                output_path = os.path.join(os.path.dirname(filepath), output_filename)
+
+            if os.path.exists(output_path):
+                logging.info(f"Output file already exists, checking integrity: {output_path}")
+                is_corrupted = False
+                try:
+                    with py7zr.SevenZipFile(output_path, 'r') as zf:
+                        zf.test()
+                except Exception:
+                    is_corrupted = True
+
+                if not is_corrupted:
+                    logging.info(f"[✓] Existing archive is healthy, skipping: {output_path}")
+                    continue
+                else:
+                    logging.warning(f"[x] Existing archive is corrupted, overwriting: {output_path}")
+
+            original_size = os.path.getsize(filepath)
+            success, duration = compress_file(filepath, output_path, level)
+
+            if success:
+                compressed_size = os.path.getsize(output_path)
+                bytes_saved = original_size - compressed_size
+                compression_ratio = compressed_size / original_size if original_size > 0 else 0
+
+                logging.info(f"    Original Size:   {original_size / (1024*1024):.2f} MB")
+                logging.info(f"    Compressed Size: {compressed_size / (1024*1024):.2f} MB")
+                logging.info(f"    Space Saved:     {bytes_saved / (1024*1024):.2f} MB ({(1 - compression_ratio) * 100:.1f}%)")
+
+                results["success"].append({
+                    "file": filepath,
+                    "output": output_path,
+                    "compression_time_seconds": round(duration, 2),
+                    "original_size_bytes": original_size,
+                    "compressed_size_bytes": compressed_size,
+                    "bytes_saved": bytes_saved,
+                    "compression_ratio": round(compression_ratio, 4)
+                })
+                if delete_orig:
+                    try:
+                        os.remove(filepath)
+                        logging.info(f"Deleted original file: {filepath}")
+                    except Exception as e:
+                        logging.error(f"Failed to delete original file {filepath}: {e}")
+            else:
+                results["failed"].append(filepath)
+
+    except KeyboardInterrupt:
+        _cleanup_and_exit(signal.SIGINT, None)
+
+    total_end_time = time.time()
+    total_duration = total_end_time - total_start_time
+    tm, ts = divmod(total_duration, 60)
+    th, tm = divmod(tm, 60)
+    total_time_str = f"{int(th)}h {int(tm)}m {int(ts)}s" if th > 0 else f"{int(tm)}m {int(ts)}s"
+
+    logging.info("\n" + "=" * 40)
+    logging.info("COMPRESSION OVERVIEW")
+    logging.info("=" * 40)
+    logging.info(f"Total time taken:        {total_time_str}")
+    logging.info(f"Total files processed:   {len(files_to_compress)}")
+    logging.info(f"Successfully compressed: {len(results['success'])}")
+    logging.info(f"Failed compression:      {len(results['failed'])}")
+
+    if results['failed']:
+        logging.info("\nFailed Files:")
+        for f in results['failed']:
+            logging.info(f"  - {f}")
+
+    results["total_time"] = total_duration
+    return results
+
 if __name__ == "__main__":
     desc = "Compress files to .7z using py7zr."
     epilog = """
@@ -167,99 +262,8 @@ Examples:
                 if valid_exts is None or f.lower().endswith(valid_exts):
                     files_to_compress.append(os.path.join(root_dir, f))
 
-    if not files_to_compress:
-        msg = f"matching {args.file_type} " if args.file_type else ""
-        logging.info(f"No valid files {msg}found to compress.")
-        sys.exit(0)
+    results = run_batch_compression(files_to_compress, args.output_dir, args.level, args.delete)
 
-    if args.output_dir and not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    results = {"success": [], "failed": []}
-
-    logging.info(f"Found {len(files_to_compress)} files to compress.")
-
-    total_start_time = time.time()
-
-    try:
-        for filepath in files_to_compress:
-            logging.info(f"\n--- Compressing: {filepath} ---")
-
-            filename = os.path.basename(filepath)
-            name, _ = os.path.splitext(filename)
-            output_filename = f"{name}.7z"
-
-            if args.output_dir:
-                output_path = os.path.join(args.output_dir, output_filename)
-            else:
-                output_path = os.path.join(os.path.dirname(filepath), output_filename)
-
-            if os.path.exists(output_path):
-                logging.info(f"Output file already exists, checking integrity: {output_path}")
-                is_corrupted = False
-                try:
-                    with py7zr.SevenZipFile(output_path, 'r') as zf:
-                        zf.test()
-                except Exception:
-                    is_corrupted = True
-
-                if not is_corrupted:
-                    logging.info(f"[✓] Existing archive is healthy, skipping: {output_path}")
-                    continue
-                else:
-                    logging.warning(f"[x] Existing archive is corrupted, overwriting: {output_path}")
-
-            original_size = os.path.getsize(filepath)
-            success, duration = compress_file(filepath, output_path, args.level)
-
-            if success:
-                compressed_size = os.path.getsize(output_path)
-                bytes_saved = original_size - compressed_size
-                compression_ratio = compressed_size / original_size if original_size > 0 else 0
-
-                logging.info(f"    Original Size:   {original_size / (1024*1024):.2f} MB")
-                logging.info(f"    Compressed Size: {compressed_size / (1024*1024):.2f} MB")
-                logging.info(f"    Space Saved:     {bytes_saved / (1024*1024):.2f} MB ({(1 - compression_ratio) * 100:.1f}%)")
-
-                results["success"].append({
-                    "file": filepath,
-                    "output": output_path,
-                    "compression_time_seconds": round(duration, 2),
-                    "original_size_bytes": original_size,
-                    "compressed_size_bytes": compressed_size,
-                    "bytes_saved": bytes_saved,
-                    "compression_ratio": round(compression_ratio, 4)
-                })
-                if args.delete:
-                    try:
-                        os.remove(filepath)
-                        logging.info(f"Deleted original file: {filepath}")
-                    except Exception as e:
-                        logging.error(f"Failed to delete original file {filepath}: {e}")
-            else:
-                results["failed"].append(filepath)
-
-    except KeyboardInterrupt:
-        _cleanup_and_exit(signal.SIGINT, None)
-
-    total_end_time = time.time()
-    total_duration = total_end_time - total_start_time
-    tm, ts = divmod(total_duration, 60)
-    th, tm = divmod(tm, 60)
-    total_time_str = f"{int(th)}h {int(tm)}m {int(ts)}s" if th > 0 else f"{int(tm)}m {int(ts)}s"
-
-    logging.info("\n" + "=" * 40)
-    logging.info("COMPRESSION OVERVIEW")
-    logging.info("=" * 40)
-    logging.info(f"Total time taken:        {total_time_str}")
-    logging.info(f"Total files processed:   {len(files_to_compress)}")
-    logging.info(f"Successfully compressed: {len(results['success'])}")
-    logging.info(f"Failed compression:      {len(results['failed'])}")
-
-    if results['failed']:
-        logging.info("\nFailed Files:")
-        for f in results['failed']:
-            logging.info(f"  - {f}")
 
     if args.result:
         total_original_size = sum(item["original_size_bytes"] for item in results["success"])

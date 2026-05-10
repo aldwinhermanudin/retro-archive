@@ -1,556 +1,242 @@
 #!/usr/bin/env python3
-"""
-Retro Archive UI - A graphical interface for compress.py and verify.py
-"""
 import os
 import sys
-import subprocess
-import threading
-from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+import threading
+import logging
+import time
 
-# ── Resolve script paths relative to this file ─────────────────────────────
-_HERE = os.path.dirname(os.path.abspath(__file__))
-COMPRESS_SCRIPT = os.path.join(_HERE, "compress.py")
-VERIFY_SCRIPT   = os.path.join(_HERE, "verify.py")
+# Import from our existing modules
+import compress
+import verify
 
-# ── Colour palette ──────────────────────────────────────────────────────────
-BG        = "#1a1b26"
-BG2       = "#24253a"
-BG3       = "#2e3050"
-ACCENT    = "#7aa2f7"
-ACCENT2   = "#bb9af7"
-GREEN     = "#9ece6a"
-RED       = "#f7768e"
-YELLOW    = "#e0af68"
-FG        = "#c0caf5"
-FG2       = "#565f89"
-FONT      = ("Inter", 10)
-FONT_BOLD = ("Inter", 10, "bold")
-MONO      = ("JetBrains Mono", 9) if sys.platform != "win32" else ("Consolas", 9)
+class StdoutRedirector:
+    def __init__(self, text_widget):
+        self.text_widget = text_widget
+        
+    def write(self, string):
+        self.text_widget.after(0, self._write, string)
+        
+    def _write(self, string):
+        self.text_widget.configure(state='normal')
+        for char in string:
+            if char == '\r':
+                self.text_widget.mark_set("insert", "insert linestart")
+                self.text_widget.delete("insert", "insert lineend")
+            else:
+                self.text_widget.insert("insert", char)
+        self.text_widget.see('end')
+        self.text_widget.configure(state='disabled')
+        
+    def flush(self):
+        pass
 
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-def browse_file(var, filetypes=None):
-    path = filedialog.askopenfilename(filetypes=filetypes or [("All files", "*.*")])
-    if path:
-        var.set(path)
-
-def browse_dir(var):
-    path = filedialog.askdirectory()
-    if path:
-        var.set(path)
-
-def browse_save(var, defaultext=".json"):
-    path = filedialog.asksaveasfilename(defaultextension=defaultext,
-                                        filetypes=[("JSON", "*.json"), ("Log", "*.log"), ("All", "*.*")])
-    if path:
-        var.set(path)
-
-
-class RetroArchiveUI(tk.Tk):
-    def __init__(self):
+class RedirectHandler(logging.Handler):
+    def __init__(self, text_widget):
         super().__init__()
-        self.title("Retro Archive")
-        self.geometry("900x700")
-        self.minsize(760, 560)
-        self.configure(bg=BG)
-        self._apply_style()
-        self._build_ui()
-        self._running_process = None
+        self.text_widget = text_widget
 
-    # ── Styling ─────────────────────────────────────────────────────────────
-    def _apply_style(self):
-        s = ttk.Style(self)
-        s.theme_use("clam")
+    def emit(self, record):
+        msg = self.format(record)
+        self.text_widget.after(0, self._write, msg + "\n")
 
-        s.configure(".", background=BG, foreground=FG, font=FONT,
-                    fieldbackground=BG2, troughcolor=BG2, borderwidth=0,
-                    selectbackground=ACCENT, selectforeground=BG)
+    def _write(self, string):
+        self.text_widget.configure(state='normal')
+        self.text_widget.insert('end', string)
+        self.text_widget.see('end')
+        self.text_widget.configure(state='disabled')
 
-        s.configure("TNotebook", background=BG, tabmargins=[2, 4, 2, 0])
-        s.configure("TNotebook.Tab", background=BG3, foreground=FG2,
-                    padding=[16, 6], font=FONT_BOLD)
-        s.map("TNotebook.Tab",
-              background=[("selected", BG2)],
-              foreground=[("selected", ACCENT)])
+class RetroArchiveUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Retro Archive Tool")
+        self.root.geometry("800x600")
+        
+        self.create_widgets()
+        self.setup_logging()
+        
+    def setup_logging(self):
+        sys.stdout = StdoutRedirector(self.log_text)
+        sys.stderr = StdoutRedirector(self.log_text)
+        
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        # Remove existing handlers
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+        logger.addHandler(RedirectHandler(self.log_text))
+        
+    def create_widgets(self):
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        self.compress_frame = ttk.Frame(self.notebook)
+        self.verify_frame = ttk.Frame(self.notebook)
+        
+        self.notebook.add(self.compress_frame, text="Compress")
+        self.notebook.add(self.verify_frame, text="Verify")
+        
+        self.setup_compress_tab()
+        self.setup_verify_tab()
+        
+        # Log Output Section
+        log_frame = ttk.LabelFrame(self.root, text="Log Output")
+        log_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, bg='black', fg='white', font=('Courier', 10))
+        self.log_text.pack(fill='both', expand=True, padx=5, pady=5)
 
-        s.configure("TFrame", background=BG2)
-        s.configure("Card.TFrame", background=BG3, relief="flat")
+    def setup_compress_tab(self):
+        # Input selection
+        input_frame = ttk.LabelFrame(self.compress_frame, text="Input")
+        input_frame.pack(fill='x', padx=10, pady=5)
+        
+        self.comp_input_var = tk.StringVar()
+        ttk.Entry(input_frame, textvariable=self.comp_input_var).pack(side='left', fill='x', expand=True, padx=5, pady=5)
+        ttk.Button(input_frame, text="Browse File", command=lambda: self.comp_input_var.set(filedialog.askopenfilename())).pack(side='left', padx=2)
+        ttk.Button(input_frame, text="Browse Dir", command=lambda: self.comp_input_var.set(filedialog.askdirectory())).pack(side='left', padx=2)
+        
+        # Options
+        options_frame = ttk.LabelFrame(self.compress_frame, text="Options")
+        options_frame.pack(fill='x', padx=10, pady=5)
+        
+        ttk.Label(options_frame, text="Level (0-9):").grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.comp_level_var = tk.IntVar(value=5)
+        ttk.Spinbox(options_frame, from_=0, to=9, textvariable=self.comp_level_var, width=5).grid(row=0, column=1, padx=5, pady=5, sticky='w')
+        
+        self.comp_delete_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Delete Original after compression", variable=self.comp_delete_var).grid(row=0, column=2, padx=10, pady=5, sticky='w')
 
-        s.configure("TLabel", background=BG2, foreground=FG, font=FONT)
-        s.configure("Dim.TLabel", background=BG2, foreground=FG2, font=("Inter", 9))
-        s.configure("Header.TLabel", background=BG2, foreground=ACCENT,
-                    font=("Inter", 12, "bold"))
-        s.configure("Section.TLabel", background=BG2, foreground=ACCENT2,
-                    font=("Inter", 9, "bold"))
+        ttk.Label(options_frame, text="Output Dir (Optional):").grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        self.comp_output_var = tk.StringVar()
+        ttk.Entry(options_frame, textvariable=self.comp_output_var, width=30).grid(row=1, column=1, columnspan=2, padx=5, pady=5, sticky='we')
+        ttk.Button(options_frame, text="Browse", command=lambda: self.comp_output_var.set(filedialog.askdirectory())).grid(row=1, column=3, padx=5, pady=5)
+        
+        # Run button
+        ttk.Button(self.compress_frame, text="Start Compression", command=self.run_compression).pack(pady=10)
 
-        s.configure("TEntry", fieldbackground=BG3, foreground=FG,
-                    insertcolor=FG, relief="flat", padding=6)
+    def setup_verify_tab(self):
+        # Input selection
+        input_frame = ttk.LabelFrame(self.verify_frame, text="Input")
+        input_frame.pack(fill='x', padx=10, pady=5)
+        
+        self.ver_input_var = tk.StringVar()
+        ttk.Entry(input_frame, textvariable=self.ver_input_var).pack(side='left', fill='x', expand=True, padx=5, pady=5)
+        ttk.Button(input_frame, text="Browse File", command=lambda: self.ver_input_var.set(filedialog.askopenfilename())).pack(side='left', padx=2)
+        ttk.Button(input_frame, text="Browse Dir", command=lambda: self.ver_input_var.set(filedialog.askdirectory())).pack(side='left', padx=2)
+        
+        # Options
+        options_frame = ttk.LabelFrame(self.verify_frame, text="Options")
+        options_frame.pack(fill='x', padx=10, pady=5)
+        
+        self.ver_mode_var = tk.StringVar(value="redump")
+        ttk.Radiobutton(options_frame, text="Redump Verify", variable=self.ver_mode_var, value="redump").grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        ttk.Radiobutton(options_frame, text="Integrity Check (ZIP/7Z)", variable=self.ver_mode_var, value="integrity").grid(row=0, column=1, padx=5, pady=5, sticky='w')
+        
+        ttk.Label(options_frame, text="DAT File (for Redump):").grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        self.ver_dat_var = tk.StringVar()
+        ttk.Entry(options_frame, textvariable=self.ver_dat_var, width=30).grid(row=1, column=1, columnspan=2, padx=5, pady=5, sticky='we')
+        ttk.Button(options_frame, text="Browse", command=lambda: self.ver_dat_var.set(filedialog.askopenfilename(filetypes=[("XML DAT files", "*.dat;*.xml")]))).grid(row=1, column=3, padx=5, pady=5)
+        
+        self.ver_archived_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Verify inside Archives (ZIP/7z)", variable=self.ver_archived_var).grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky='w')
+        
+        # Run button
+        ttk.Button(self.verify_frame, text="Start Verification", command=self.run_verification).pack(pady=10)
 
-        s.configure("TCheckbutton", background=BG2, foreground=FG,
-                    indicatorcolor=BG3, font=FONT)
-        s.map("TCheckbutton", indicatorcolor=[("selected", ACCENT)])
+    def log_clear(self):
+        self.log_text.configure(state='normal')
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.configure(state='disabled')
 
-        s.configure("TRadiobutton", background=BG2, foreground=FG, font=FONT)
-        s.map("TRadiobutton", indicatorcolor=[("selected", ACCENT)])
+    def run_compression(self):
+        input_path = self.comp_input_var.get().strip()
+        if not input_path:
+            messagebox.showerror("Error", "Please select an input file or directory.")
+            return
+            
+        level = self.comp_level_var.get()
+        delete_orig = self.comp_delete_var.get()
+        output_dir = self.comp_output_var.get().strip()
+        
+        self.log_clear()
+        threading.Thread(target=self._compress_task, args=(input_path, output_dir, level, delete_orig), daemon=True).start()
 
-        s.configure("TCombobox", fieldbackground=BG3, foreground=FG,
-                    selectbackground=BG3, selectforeground=FG)
-
-        s.configure("TScale", background=BG2, troughcolor=BG3)
-
-        # Buttons
-        s.configure("Run.TButton", background=ACCENT, foreground=BG,
-                    font=("Inter", 10, "bold"), padding=[20, 8], relief="flat")
-        s.map("Run.TButton",
-              background=[("active", "#92b0ff"), ("disabled", BG3)],
-              foreground=[("disabled", FG2)])
-
-        s.configure("Stop.TButton", background=RED, foreground=BG,
-                    font=("Inter", 10, "bold"), padding=[20, 8], relief="flat")
-        s.map("Stop.TButton", background=[("active", "#ff9090")])
-
-        s.configure("Browse.TButton", background=BG3, foreground=ACCENT,
-                    font=FONT, padding=[8, 4], relief="flat")
-        s.map("Browse.TButton", background=[("active", "#3a3d5c")])
-
-        s.configure("TSeparator", background=BG3)
-        s.configure("TProgressbar", troughcolor=BG3, background=ACCENT, thickness=4)
-
-    # ── Main layout ──────────────────────────────────────────────────────────
-    def _build_ui(self):
-        # Title bar
-        header = tk.Frame(self, bg=BG, pady=12)
-        header.pack(fill="x", padx=20)
-        tk.Label(header, text="⬡ Retro Archive", font=("Inter", 16, "bold"),
-                 bg=BG, fg=ACCENT).pack(side="left")
-        tk.Label(header, text="compress & verify your ROM collection",
-                 font=("Inter", 10), bg=BG, fg=FG2).pack(side="left", padx=12)
-
-        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=0)
-
-        # Notebook
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=16, pady=10)
-
-        self._compress_tab = CompressTab(nb, self)
-        self._verify_tab   = VerifyTab(nb, self)
-
-        nb.add(self._compress_tab, text="  Compress  ")
-        nb.add(self._verify_tab,   text="  Verify  ")
-
-        # Output panel
-        out_frame = tk.Frame(self, bg=BG, pady=4)
-        out_frame.pack(fill="both", expand=False, padx=16, pady=(0, 12))
-
-        hdr = tk.Frame(out_frame, bg=BG)
-        hdr.pack(fill="x")
-        tk.Label(hdr, text="OUTPUT", font=("Inter", 8, "bold"),
-                 bg=BG, fg=FG2).pack(side="left")
-        tk.Button(hdr, text="Clear", font=("Inter", 8), bg=BG, fg=FG2,
-                  bd=0, cursor="hand2", activebackground=BG, activeforeground=ACCENT,
-                  command=self._clear_output).pack(side="right")
-
-        self.output_text = tk.Text(out_frame, height=14, bg="#13131f", fg=FG,
-                                   font=MONO, relief="flat", bd=0,
-                                   insertbackground=FG, wrap="word",
-                                   selectbackground=ACCENT, selectforeground=BG)
-        self.output_text.pack(fill="both", expand=True)
-        self.output_text.tag_configure("ok",   foreground=GREEN)
-        self.output_text.tag_configure("err",  foreground=RED)
-        self.output_text.tag_configure("warn", foreground=YELLOW)
-        self.output_text.tag_configure("info", foreground=ACCENT)
-        self.output_text.tag_configure("dim",  foreground=FG2)
-
-        sb = ttk.Scrollbar(out_frame, command=self.output_text.yview)
-        self.output_text["yscrollcommand"] = sb.set
-        sb.pack(side="right", fill="y")
-
-        # Status bar
-        self.status_var = tk.StringVar(value="Ready")
-        self._progress = ttk.Progressbar(self, mode="indeterminate", style="TProgressbar")
-        self._progress.pack(fill="x", padx=16, pady=(0, 4))
-        tk.Label(self, textvariable=self.status_var, font=("Inter", 9),
-                 bg=BG, fg=FG2, anchor="w").pack(fill="x", padx=16, pady=(0, 6))
-
-    # ── Output helpers ───────────────────────────────────────────────────────
-    def _clear_output(self):
-        self.output_text.configure(state="normal")
-        self.output_text.delete("1.0", "end")
-
-    def append_output(self, line: str):
-        self.output_text.configure(state="normal")
-        lower = line.lower()
-        if "[✓]" in line or "successfully" in lower or "healthy" in lower:
-            tag = "ok"
-        elif "[x]" in line or "error" in lower or "failed" in lower or "corrupt" in lower:
-            tag = "err"
-        elif "[!]" in line or "warn" in lower or "skipping" in lower:
-            tag = "warn"
-        elif "---" in line or "===" in line or "overview" in lower:
-            tag = "info"
-        elif line.startswith("Progress"):
-            # overwrite progress line in place
-            self.output_text.delete("end-2l", "end-1l")
-            tag = "dim"
-        else:
-            tag = None
-
-        self.output_text.insert("end", line + "\n", tag)
-        self.output_text.see("end")
-        self.output_text.configure(state="disabled")
-
-    # ── Process management ───────────────────────────────────────────────────
-    def run_command(self, cmd: list, on_finish=None):
-        if self._running_process:
-            messagebox.showwarning("Busy", "A process is already running.")
+    def _compress_task(self, input_path, output_dir, level, delete_orig):
+        files_to_compress = []
+        if os.path.isfile(input_path):
+            files_to_compress.append(input_path)
+        elif os.path.isdir(input_path):
+            for root_dir, _, files in os.walk(input_path):
+                for f in files:
+                    if not f.lower().endswith('.7z'):
+                        files_to_compress.append(os.path.join(root_dir, f))
+                        
+        if not files_to_compress:
+            logging.info("No files found to compress.")
             return
 
-        self._clear_output()
-        self.append_output(f"$ {' '.join(cmd)}\n")
-        self.status_var.set("Running…")
-        self._progress.start(10)
+        try:
+            compress.run_batch_compression(files_to_compress, output_dir, level, delete_orig)
+        except Exception as e:
+            logging.error(f"Error during compression: {e}")
 
-        def _worker():
-            try:
-                env = os.environ.copy()
-                env["PYTHONUNBUFFERED"] = "1"
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    env=env
-                )
-                self._running_process = proc
-                buf = b""
-                while True:
-                    byte = proc.stdout.read(1)
-                    if not byte:
-                        break
-                    if byte in (b"\n", b"\r"):
-                        line = buf.decode("utf-8", errors="replace")
-                        is_cr = (byte == b"\r")
-                        self.after(0, self._append_line, line, is_cr)
-                        buf = b""
+    def run_verification(self):
+        input_path = self.ver_input_var.get().strip()
+        if not input_path:
+            messagebox.showerror("Error", "Please select an input file or directory.")
+            return
+            
+        mode = self.ver_mode_var.get()
+        dat_file = self.ver_dat_var.get().strip()
+        archived = self.ver_archived_var.get()
+        
+        self.log_clear()
+        threading.Thread(target=self._verify_task, args=(input_path, mode, dat_file, archived), daemon=True).start()
+
+    def _verify_task(self, input_path, mode, dat_file, archived):
+        files_to_verify = []
+        if os.path.isfile(input_path):
+            files_to_verify.append(input_path)
+        elif os.path.isdir(input_path):
+            for root_dir, _, files in os.walk(input_path):
+                for f in files:
+                    if mode == 'integrity':
+                        if f.lower().endswith(('.zip', '.7z')):
+                            files_to_verify.append(os.path.join(root_dir, f))
                     else:
-                        buf += byte
-                if buf:
-                    line = buf.decode("utf-8", errors="replace")
-                    self.after(0, self._append_line, line, False)
-                proc.wait()
-                rc = proc.returncode
+                        if f.lower().endswith(('.iso', '.zip', '.bin', '.7z')):
+                            files_to_verify.append(os.path.join(root_dir, f))
+
+        if not files_to_verify:
+            logging.info("No valid files found to verify.")
+            return
+            
+        dat_root = None
+        if mode == 'redump' and dat_file:
+            logging.info(f"Loading DAT file: {dat_file}")
+            try:
+                import xml.etree.ElementTree as ET
+                tree = ET.parse(dat_file)
+                dat_root = tree.getroot()
             except Exception as e:
-                self.after(0, self.append_output, f"[x] Failed to start process: {e}")
-                rc = -1
-            finally:
-                self._running_process = None
-                self.after(0, self._on_process_done, rc, on_finish)
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _append_line(self, line: str, is_progress: bool):
-        """Append a line. If is_progress (\\r), overwrite the last line."""
-        if is_progress and line.strip():
-            # Overwrite previous progress line
-            self.output_text.configure(state="normal")
-            self.output_text.delete("end-2l linestart", "end-1l lineend")
-            self.output_text.insert("end-1l lineend", "\n" + line, "dim")
-            self.output_text.see("end")
-            self.output_text.configure(state="disabled")
-        else:
-            self.append_output(line)
-
-    def stop_command(self):
-        if self._running_process:
-            self._running_process.terminate()
-
-    def _on_process_done(self, rc, on_finish):
-        self._progress.stop()
-        if rc == 0:
-            self.status_var.set("✓ Finished successfully")
-        elif rc == 1:
-            self.status_var.set("⚠ Finished with errors")
-        else:
-            self.status_var.set(f"✗ Process exited with code {rc}")
-        if on_finish:
-            on_finish(rc)
-
-
-# ── Reusable widgets ─────────────────────────────────────────────────────────
-class PathRow(ttk.Frame):
-    """Label + Entry + Browse button in one row."""
-    def __init__(self, parent, label, var, browse_fn, width=42):
-        super().__init__(parent, style="TFrame")
-        ttk.Label(self, text=label, width=16, anchor="e").pack(side="left", padx=(0, 6))
-        ttk.Entry(self, textvariable=var, width=width).pack(side="left", expand=True, fill="x")
-        ttk.Button(self, text="Browse", style="Browse.TButton",
-                   command=browse_fn).pack(side="left", padx=(4, 0))
-
-
-class Section(ttk.Frame):
-    """A card-like section with a title."""
-    def __init__(self, parent, title):
-        super().__init__(parent, style="TFrame", padding=10)
-        ttk.Label(self, text=title.upper(), style="Section.TLabel").pack(anchor="w", pady=(0, 6))
-
-
-# ══ Compress Tab ══════════════════════════════════════════════════════════════
-class CompressTab(ttk.Frame):
-    def __init__(self, parent, app: RetroArchiveUI):
-        super().__init__(parent, padding=16)
-        self.app = app
-        self._build()
-
-    def _build(self):
-        ttk.Label(self, text="Compress to 7Z", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
-
-        # Input
-        inp = Section(self, "Input")
-        inp.pack(fill="x", pady=(0, 8))
-
-        self._input_mode = tk.StringVar(value="file")
-        self._file_var = tk.StringVar()
-        self._dir_var  = tk.StringVar()
-
-        mode_row = ttk.Frame(inp, style="TFrame")
-        mode_row.pack(fill="x", pady=(0, 6))
-        ttk.Radiobutton(mode_row, text="Single File", variable=self._input_mode,
-                        value="file", command=self._toggle_input).pack(side="left", padx=(0, 16))
-        ttk.Radiobutton(mode_row, text="Directory", variable=self._input_mode,
-                        value="directory", command=self._toggle_input).pack(side="left")
-
-        self._file_row = PathRow(inp, "File", self._file_var,
-                                 lambda: browse_file(self._file_var))
-        self._file_row.pack(fill="x", pady=2)
-
-        self._dir_row = PathRow(inp, "Directory", self._dir_var,
-                                lambda: browse_dir(self._dir_var))
-        self._dir_row.pack(fill="x", pady=2)
-
-        self._toggle_input()
-
-        # Options
-        opts = Section(self, "Options")
-        opts.pack(fill="x", pady=(0, 8))
-
-        # File types
-        ft_row = ttk.Frame(opts, style="TFrame")
-        ft_row.pack(fill="x", pady=2)
-        ttk.Label(ft_row, text="File Types", width=16, anchor="e").pack(side="left", padx=(0, 6))
-        self._file_type_var = tk.StringVar()
-        ttk.Entry(ft_row, textvariable=self._file_type_var, width=30).pack(side="left")
-        ttk.Label(ft_row, text="  e.g.  .iso .bin  (blank = all)",
-                  style="Dim.TLabel").pack(side="left", padx=8)
-
-        # Level
-        lvl_row = ttk.Frame(opts, style="TFrame")
-        lvl_row.pack(fill="x", pady=6)
-        ttk.Label(lvl_row, text="Level", width=16, anchor="e").pack(side="left", padx=(0, 6))
-        self._level_var = tk.IntVar(value=5)
-        scale = ttk.Scale(lvl_row, from_=0, to=9, orient="horizontal",
-                          variable=self._level_var, length=180)
-        scale.pack(side="left")
-        ttk.Label(lvl_row, textvariable=self._level_var, width=3).pack(side="left", padx=6)
-        ttk.Label(lvl_row, text="0 = store  9 = ultra", style="Dim.TLabel").pack(side="left")
-
-        # Checkboxes
-        chk_row = ttk.Frame(opts, style="TFrame")
-        chk_row.pack(fill="x", pady=2)
-        self._delete_var = tk.BooleanVar()
-        ttk.Checkbutton(chk_row, text="Delete originals after compression",
-                        variable=self._delete_var).pack(side="left")
-
-        # Output
-        out = Section(self, "Output")
-        out.pack(fill="x", pady=(0, 8))
-
-        self._out_dir_var = tk.StringVar()
-        PathRow(out, "7z Output Dir", self._out_dir_var,
-                lambda: browse_dir(self._out_dir_var)).pack(fill="x", pady=2)
-        ttk.Label(out, text="Where compressed .7z files are saved (blank = same as input)",
-                  style="Dim.TLabel").pack(anchor="w", padx=(136, 0))
-
-        self._report_dir_var = tk.StringVar()
-        PathRow(out, "Report Dir", self._report_dir_var,
-                lambda: browse_dir(self._report_dir_var)).pack(fill="x", pady=(6, 2))
-        ttk.Label(out, text="Log and stats JSON are always saved here (blank = current directory)",
-                  style="Dim.TLabel").pack(anchor="w", padx=(136, 0))
-
-        # Buttons
-        btn_row = ttk.Frame(self, style="TFrame")
-        btn_row.pack(fill="x", pady=(4, 0))
-        ttk.Button(btn_row, text="▶  Run Compression", style="Run.TButton",
-                   command=self._run).pack(side="left")
-        ttk.Button(btn_row, text="■  Stop", style="Stop.TButton",
-                   command=self.app.stop_command).pack(side="left", padx=8)
-
-    def _toggle_input(self):
-        if self._input_mode.get() == "file":
-            self._file_row.pack(fill="x", pady=2)
-            self._dir_row.pack_forget()
-        else:
-            self._file_row.pack_forget()
-            self._dir_row.pack(fill="x", pady=2)
-
-    def _run(self):
-        cmd = [sys.executable, COMPRESS_SCRIPT]
-
-        if self._input_mode.get() == "file":
-            if not self._file_var.get():
-                messagebox.showerror("Missing Input", "Please select a file to compress.")
+                logging.error(f"Error parsing DAT file: {e}")
                 return
-            cmd += ["--file", self._file_var.get()]
-        else:
-            if not self._dir_var.get():
-                messagebox.showerror("Missing Input", "Please select a directory to compress.")
-                return
-            cmd += ["--directory", self._dir_var.get()]
 
-        ft = self._file_type_var.get().strip()
-        if ft:
-            cmd += ["--file-type"] + ft.split()
+        logging.info(f"Starting verification ({mode}) for {len(files_to_verify)} files...")
+        
+        try:
+            if mode == 'integrity':
+                verify.run_integrity_check(files_to_verify)
+            else:
+                verify.run_redump_check(files_to_verify, dat_root, archived)
+        except Exception as e:
+            logging.error(f"Error during verification: {e}")
+            
+        logging.info("\nVerification task complete.")
 
-        cmd += ["--level", str(self._level_var.get())]
-
-        if self._delete_var.get():
-            cmd.append("--delete")
-        if self._out_dir_var.get():
-            cmd += ["--output-dir", self._out_dir_var.get()]
-
-        # Always generate log and result files with timestamps
-        report_dir = self._report_dir_var.get() or "."
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        cmd += ["--log-file", os.path.join(report_dir, f"compress_{ts}.log")]
-        cmd += ["--result", os.path.join(report_dir, f"compress_{ts}.json")]
-
-        self.app.run_command(cmd)
-
-
-# ══ Verify Tab ════════════════════════════════════════════════════════════════
-class VerifyTab(ttk.Frame):
-    def __init__(self, parent, app: RetroArchiveUI):
-        super().__init__(parent, padding=16)
-        self.app = app
-        self._build()
-
-    def _build(self):
-        ttk.Label(self, text="Verify ROMs / Archives", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
-
-        # Input
-        inp = Section(self, "Input")
-        inp.pack(fill="x", pady=(0, 8))
-
-        self._input_mode = tk.StringVar(value="file")
-        self._file_var = tk.StringVar()
-        self._dir_var  = tk.StringVar()
-
-        mode_row = ttk.Frame(inp, style="TFrame")
-        mode_row.pack(fill="x", pady=(0, 6))
-        ttk.Radiobutton(mode_row, text="Single File", variable=self._input_mode,
-                        value="file", command=self._toggle_input).pack(side="left", padx=(0, 16))
-        ttk.Radiobutton(mode_row, text="Directory", variable=self._input_mode,
-                        value="directory", command=self._toggle_input).pack(side="left")
-
-        self._file_row = PathRow(inp, "File", self._file_var,
-                                 lambda: browse_file(self._file_var))
-        self._file_row.pack(fill="x", pady=2)
-
-        self._dir_row = PathRow(inp, "Directory", self._dir_var,
-                                lambda: browse_dir(self._dir_var))
-        self._dir_row.pack(fill="x", pady=2)
-        self._toggle_input()
-
-        # Command
-        cmd_frame = Section(self, "Command")
-        cmd_frame.pack(fill="x", pady=(0, 8))
-
-        self._command = tk.StringVar(value="redump")
-        cmd_row = ttk.Frame(cmd_frame, style="TFrame")
-        cmd_row.pack(fill="x", pady=(0, 6))
-        ttk.Radiobutton(cmd_row, text="Redump verification", variable=self._command,
-                        value="redump", command=self._toggle_command).pack(side="left", padx=(0, 16))
-        ttk.Radiobutton(cmd_row, text="Integrity check", variable=self._command,
-                        value="integrity-check", command=self._toggle_command).pack(side="left")
-
-        # Redump options (shown/hidden)
-        self._redump_frame = ttk.Frame(cmd_frame, style="TFrame")
-        self._redump_frame.pack(fill="x")
-
-        self._dat_var = tk.StringVar()
-        PathRow(self._redump_frame, "DAT File", self._dat_var,
-                lambda: browse_file(self._dat_var, [("DAT files", "*.dat"), ("XML", "*.xml"), ("All", "*.*")])
-                ).pack(fill="x", pady=2)
-
-        self._archived_rom_var = tk.BooleanVar()
-        ttk.Checkbutton(self._redump_frame,
-                        text="--archived-rom  (stream-verify ROMs inside ZIP/7Z archives)",
-                        variable=self._archived_rom_var).pack(anchor="w", pady=4)
-
-        # Output
-        out = Section(self, "Output")
-        out.pack(fill="x", pady=(0, 8))
-
-        self._report_dir_var = tk.StringVar()
-        PathRow(out, "Report Dir", self._report_dir_var,
-                lambda: browse_dir(self._report_dir_var)).pack(fill="x", pady=2)
-        ttk.Label(out, text="Log and result JSON are always saved here (blank = current directory)",
-                  style="Dim.TLabel").pack(anchor="w", padx=(136, 0))
-
-        # Buttons
-        btn_row = ttk.Frame(self, style="TFrame")
-        btn_row.pack(fill="x", pady=(4, 0))
-        ttk.Button(btn_row, text="▶  Run Verification", style="Run.TButton",
-                   command=self._run).pack(side="left")
-        ttk.Button(btn_row, text="■  Stop", style="Stop.TButton",
-                   command=self.app.stop_command).pack(side="left", padx=8)
-
-    def _toggle_input(self):
-        if self._input_mode.get() == "file":
-            self._file_row.pack(fill="x", pady=2)
-            self._dir_row.pack_forget()
-        else:
-            self._file_row.pack_forget()
-            self._dir_row.pack(fill="x", pady=2)
-
-    def _toggle_command(self):
-        if self._command.get() == "redump":
-            self._redump_frame.pack(fill="x")
-        else:
-            self._redump_frame.pack_forget()
-
-    def _run(self):
-        cmd = [sys.executable, VERIFY_SCRIPT]
-
-        if self._input_mode.get() == "file":
-            if not self._file_var.get():
-                messagebox.showerror("Missing Input", "Please select a file to verify.")
-                return
-            cmd += ["--file", self._file_var.get()]
-        else:
-            if not self._dir_var.get():
-                messagebox.showerror("Missing Input", "Please select a directory to verify.")
-                return
-            cmd += ["--directory", self._dir_var.get()]
-
-        # Always generate log file with timestamp
-        report_dir = self._report_dir_var.get() or "."
-        sub = self._command.get()
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        cmd += ["--log-file", os.path.join(report_dir, f"verify_{sub}_{ts}.log")]
-
-        cmd.append(sub)
-
-        if sub == "redump":
-            if self._dat_var.get():
-                cmd += ["--dat", self._dat_var.get()]
-            cmd += ["--result", os.path.join(report_dir, f"verify_{sub}_{ts}.json")]
-            if self._archived_rom_var.get():
-                cmd.append("--archived-rom")
-
-        self.app.run_command(cmd)
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app = RetroArchiveUI()
-    app.mainloop()
+    root = tk.Tk()
+    app = RetroArchiveUI(root)
+    root.mainloop()
