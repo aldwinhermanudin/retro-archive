@@ -6,6 +6,7 @@ import os
 import sys
 import subprocess
 import threading
+from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -337,16 +338,16 @@ class CompressTab(ttk.Frame):
         out.pack(fill="x", pady=(0, 8))
 
         self._out_dir_var = tk.StringVar()
-        PathRow(out, "Output Dir", self._out_dir_var,
+        PathRow(out, "7z Output Dir", self._out_dir_var,
                 lambda: browse_dir(self._out_dir_var)).pack(fill="x", pady=2)
+        ttk.Label(out, text="Where compressed .7z files are saved (blank = same as input)",
+                  style="Dim.TLabel").pack(anchor="w", padx=(136, 0))
 
-        self._result_var = tk.StringVar()
-        PathRow(out, "Stats JSON", self._result_var,
-                lambda: browse_save(self._result_var)).pack(fill="x", pady=2)
-
-        self._log_var = tk.StringVar()
-        PathRow(out, "Log File", self._log_var,
-                lambda: browse_save(self._log_var, ".log")).pack(fill="x", pady=2)
+        self._report_dir_var = tk.StringVar()
+        PathRow(out, "Report Dir", self._report_dir_var,
+                lambda: browse_dir(self._report_dir_var)).pack(fill="x", pady=(6, 2))
+        ttk.Label(out, text="Log and stats JSON are always saved here (blank = current directory)",
+                  style="Dim.TLabel").pack(anchor="w", padx=(136, 0))
 
         # Buttons
         btn_row = ttk.Frame(self, style="TFrame")
@@ -388,10 +389,12 @@ class CompressTab(ttk.Frame):
             cmd.append("--delete")
         if self._out_dir_var.get():
             cmd += ["--output-dir", self._out_dir_var.get()]
-        if self._result_var.get():
-            cmd += ["--result", self._result_var.get()]
-        if self._log_var.get():
-            cmd += ["--log-file", self._log_var.get()]
+
+        # Always generate log and result files with timestamps
+        report_dir = self._report_dir_var.get() or "."
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        cmd += ["--log-file", os.path.join(report_dir, f"compress_{ts}.log")]
+        cmd += ["--result", os.path.join(report_dir, f"compress_{ts}.json")]
 
         self.app.run_command(cmd)
 
@@ -460,13 +463,11 @@ class VerifyTab(ttk.Frame):
         out = Section(self, "Output")
         out.pack(fill="x", pady=(0, 8))
 
-        self._result_var = tk.StringVar()
-        PathRow(out, "Result JSON", self._result_var,
-                lambda: browse_save(self._result_var)).pack(fill="x", pady=2)
-
-        self._log_var = tk.StringVar()
-        PathRow(out, "Log File", self._log_var,
-                lambda: browse_save(self._log_var, ".log")).pack(fill="x", pady=2)
+        self._report_dir_var = tk.StringVar()
+        PathRow(out, "Report Dir", self._report_dir_var,
+                lambda: browse_dir(self._report_dir_var)).pack(fill="x", pady=2)
+        ttk.Label(out, text="Log and result JSON are always saved here (blank = current directory)",
+                  style="Dim.TLabel").pack(anchor="w", padx=(136, 0))
 
         # Buttons
         btn_row = ttk.Frame(self, style="TFrame")
@@ -504,17 +505,18 @@ class VerifyTab(ttk.Frame):
                 return
             cmd += ["--directory", self._dir_var.get()]
 
-        if self._log_var.get():
-            cmd += ["--log-file", self._log_var.get()]
-
+        # Always generate log file with timestamp
+        report_dir = self._report_dir_var.get() or "."
         sub = self._command.get()
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        cmd += ["--log-file", os.path.join(report_dir, f"verify_{sub}_{ts}.log")]
+
         cmd.append(sub)
 
         if sub == "redump":
             if self._dat_var.get():
                 cmd += ["--dat", self._dat_var.get()]
-            if self._result_var.get():
-                cmd += ["--result", self._result_var.get()]
+            cmd += ["--result", os.path.join(report_dir, f"verify_{sub}_{ts}.json")]
             if self._archived_rom_var.get():
                 cmd.append("--archived-rom")
 
