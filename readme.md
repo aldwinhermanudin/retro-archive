@@ -45,7 +45,7 @@ A Python script to compress files into the highly efficient `.7z` archive format
 
 #### Features
 * **Batch Compression:** Compress a single file or an entire directory automatically.
-* **Custom File Types:** Use `--file-type` to specify which files to compress when scanning a directory (e.g. `.iso .bin`).
+* **Custom File Types:** Use `--file-type` to specify which files to compress when scanning a directory (e.g. `.iso .bin`). If omitted, all files in the directory will be compressed (existing `.7z` archives are automatically ignored).
 * **Space Saving:** Automatically delete the original file after successful compression using the `--delete` flag.
 * **JSON Statistics:** Generate detailed JSON reports containing compression ratios, bytes saved, and time taken using the `--result` flag.
 * **Configurable:** Customize compression levels and output directories.

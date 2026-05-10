@@ -71,7 +71,7 @@ Examples:
     group.add_argument("--directory", help="Path to a directory containing files to compress")
     
     parser.add_argument("--output-dir", help="Path to the output directory for .7z files (defaults to same as input)", required=False)
-    parser.add_argument("--file-type", nargs="+", default=[".iso"], help="File extensions to compress when scanning a directory (e.g. .iso .bin). Default is .iso")
+    parser.add_argument("--file-type", nargs="+", default=None, help="File extensions to compress when scanning a directory (e.g. .iso .bin). Default is all files.")
     parser.add_argument("--level", type=int, choices=range(0, 10), default=5, help="Compression level from 0 (store) to 9 (ultra). Default is 5.")
     parser.add_argument("--delete", action="store_true", help="Delete the original file after successful compression.")
     parser.add_argument("--result", help="Path to output a JSON file containing compression statistics", required=False)
@@ -102,14 +102,21 @@ Examples:
         if not os.path.isdir(args.directory):
             logging.error(f"Error: Directory not found -> {args.directory}")
             sys.exit(1)
-        valid_exts = tuple(ext.lower() if ext.startswith('.') else f".{ext.lower()}" for ext in args.file_type)
+        if args.file_type:
+            valid_exts = tuple(ext.lower() if ext.startswith('.') else f".{ext.lower()}" for ext in args.file_type)
+        else:
+            valid_exts = None
+            
         for root_dir, _, files in os.walk(args.directory):
             for f in files:
-                if f.lower().endswith(valid_exts):
+                if f.lower().endswith('.7z'):
+                    continue
+                if valid_exts is None or f.lower().endswith(valid_exts):
                     files_to_compress.append(os.path.join(root_dir, f))
                     
     if not files_to_compress:
-        logging.info(f"No valid files matching {args.file_type} found to compress.")
+        msg = f"matching {args.file_type} " if args.file_type else ""
+        logging.info(f"No valid files {msg}found to compress.")
         sys.exit(0)
         
     if args.output_dir and not os.path.exists(args.output_dir):
