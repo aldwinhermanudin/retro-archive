@@ -74,6 +74,15 @@ class HashCalculationIO(Py7zIO):
             sys.stdout.flush()
         return len(s)
 
+    def flush(self):
+        pass
+
+    def read(self, length=-1):
+        return b""
+
+    def seek(self, offset, whence=0):
+        return 0
+
     def size(self):
         return self.size_expected
 
