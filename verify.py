@@ -274,7 +274,6 @@ if __name__ == "__main__":
                     results["failed"].append({"file": filepath, "sha1": "", "reason": "MISSING_PY7ZR"})
                     continue
                 try:
-                    import tempfile, shutil
                     with py7zr.SevenZipFile(filepath, 'r') as zf:
                         all_files = zf.list()
                         targets = [
@@ -290,34 +289,15 @@ if __name__ == "__main__":
                             continue
 
                         logging.info(f"\n--- Verifying inside 7Z: {filepath} ---")
+                        factory = HashWriterFactory(file_sizes)
+                        zf.extractall(factory=factory)
+                        for target in targets:
+                            if target not in factory.io_objects:
+                                continue
+                            logging.info(f"\nResults for 7Z target: {target}")
+                            hashes = factory.io_objects[target].get_hashes()
+                            process_match(f"{filepath}/{target}", hashes)
 
-                        # Try streaming approach first (py7zr 1.x: no disk writes)
-                        try:
-                            factory = HashWriterFactory(file_sizes)
-                            zf.extractall(factory=factory)
-                            for target in targets:
-                                if target not in factory.io_objects:
-                                    continue
-                                logging.info(f"\nResults for 7Z target: {target}")
-                                hashes = factory.io_objects[target].get_hashes()
-                                process_match(f"{filepath}/{target}", hashes)
-
-                        except TypeError:
-                            # Fallback: extract to temp dir (older py7zr versions)
-                            zf.reset()
-                            tmpdir = tempfile.mkdtemp()
-                            try:
-                                zf.extractall(path=tmpdir)
-                                for target in targets:
-                                    extracted_path = os.path.join(tmpdir, target)
-                                    if not os.path.exists(extracted_path):
-                                        continue
-                                    os.chmod(extracted_path, 0o644)
-                                    logging.info(f"\nResults for 7Z target: {target}")
-                                    hashes = calculate_hashes(extracted_path)
-                                    process_match(f"{filepath}/{target}", hashes)
-                            finally:
-                                shutil.rmtree(tmpdir, ignore_errors=True)
                 except py7zr.exceptions.Bad7zFile:
                     logging.error(f"[x] FAILED: Invalid 7z file -> {filepath}")
                     results["failed"].append({"file": filepath, "sha1": "", "reason": "INVALID_7Z"})
