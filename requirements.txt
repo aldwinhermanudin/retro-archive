@@ -1,1 +1,15 @@
-py7zr>=0.20.0
+# Core dependency for .7z archive support (compress.py and verify.py)
+py7zr>=1.0.0
+
+# ui.py requires tkinter, which is part of the Python standard library
+# but needs the system tcl-tk package to be installed separately:
+#
+#   macOS (Homebrew):
+#     brew install tcl-tk
+#     brew reinstall python@3.x --with-tcl-tk
+#
+#   Debian/Ubuntu:
+#     sudo apt install python3-tk
+#
+#   Arch Linux:
+#     sudo pacman -S tk
