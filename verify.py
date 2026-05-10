@@ -274,6 +274,7 @@ if __name__ == "__main__":
                     results["failed"].append({"file": filepath, "sha1": "", "reason": "MISSING_PY7ZR"})
                     continue
                 try:
+                    import tempfile, shutil
                     with py7zr.SevenZipFile(filepath, 'r') as zf:
                         targets = [
                             zinfo.filename for zinfo in zf.list()
@@ -284,15 +285,18 @@ if __name__ == "__main__":
                             continue
 
                         logging.info(f"\n--- Verifying inside 7Z: {filepath} ---")
-                        extracted = zf.read(targets)
-
-                        for target, bio in extracted.items():
-                            logging.info(f"\nResults for 7Z target: {target}")
-                            bio.seek(0)
-                            file_size = bio.seek(0, 2)
-                            bio.seek(0)
-                            hashes = calculate_hashes_from_stream(bio, file_size, target)
-                            process_match(f"{filepath}/{target}", hashes)
+                        tmpdir = tempfile.mkdtemp()
+                        try:
+                            zf.extract(path=tmpdir, targets=targets)
+                            for target in targets:
+                                extracted_path = os.path.join(tmpdir, target)
+                                if not os.path.exists(extracted_path):
+                                    continue
+                                logging.info(f"\nResults for 7Z target: {target}")
+                                hashes = calculate_hashes(extracted_path)
+                                process_match(f"{filepath}/{target}", hashes)
+                        finally:
+                            shutil.rmtree(tmpdir, ignore_errors=True)
                 except py7zr.exceptions.Bad7zFile:
                     logging.error(f"[x] FAILED: Invalid 7z file -> {filepath}")
                     results["failed"].append({"file": filepath, "sha1": "", "reason": "INVALID_7Z"})
