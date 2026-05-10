@@ -4,6 +4,7 @@ import sys
 import argparse
 import logging
 import subprocess
+import time
 
 __version__ = "0.1.0"
 
@@ -24,6 +25,7 @@ def compress_file(input_path: str, output_path: str, sevenzip_path: str, compres
     logging.info(f"Running: {' '.join(cmd)}")
     
     try:
+        start_time = time.time()
         # Run 7z and stream output
         process = subprocess.Popen(
             cmd,
@@ -37,9 +39,14 @@ def compress_file(input_path: str, output_path: str, sevenzip_path: str, compres
             sys.stdout.flush()
             
         process.wait()
+        end_time = time.time()
         
         if process.returncode == 0:
-            logging.info(f"\n[✓] Successfully compressed: {os.path.basename(output_path)}")
+            duration = end_time - start_time
+            m, s = divmod(duration, 60)
+            h, m = divmod(m, 60)
+            time_str = f"{int(h)}h {int(m)}m {int(s)}s" if h > 0 else f"{int(m)}m {int(s)}s"
+            logging.info(f"\n[✓] Successfully compressed: {os.path.basename(output_path)} in {time_str}")
             return True
         else:
             logging.error(f"\n[x] Failed to compress: {os.path.basename(input_path)} (Return code: {process.returncode})")
@@ -123,6 +130,8 @@ Examples:
     
     logging.info(f"Found {len(files_to_compress)} files to compress.")
     
+    total_start_time = time.time()
+    
     for filepath in files_to_compress:
         logging.info(f"\n--- Compressing: {filepath} ---")
         
@@ -151,10 +160,17 @@ Examples:
         else:
             results["failed"].append(filepath)
 
+    total_end_time = time.time()
+    total_duration = total_end_time - total_start_time
+    tm, ts = divmod(total_duration, 60)
+    th, tm = divmod(tm, 60)
+    total_time_str = f"{int(th)}h {int(tm)}m {int(ts)}s" if th > 0 else f"{int(tm)}m {int(ts)}s"
+
     logging.info("\n" + "=" * 40)
     logging.info("COMPRESSION OVERVIEW")
     logging.info("=" * 40)
-    logging.info(f"Total files processed: {len(files_to_compress)}")
+    logging.info(f"Total time taken:        {total_time_str}")
+    logging.info(f"Total files processed:   {len(files_to_compress)}")
     logging.info(f"Successfully compressed: {len(results['success'])}")
     logging.info(f"Failed compression:      {len(results['failed'])}")
     
