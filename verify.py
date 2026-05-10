@@ -292,6 +292,8 @@ if __name__ == "__main__":
                                 extracted_path = os.path.join(tmpdir, target)
                                 if not os.path.exists(extracted_path):
                                     continue
+                                # Ensure the extracted file is readable regardless of stored permissions
+                                os.chmod(extracted_path, 0o644)
                                 logging.info(f"\nResults for 7Z target: {target}")
                                 hashes = calculate_hashes(extracted_path)
                                 process_match(f"{filepath}/{target}", hashes)
