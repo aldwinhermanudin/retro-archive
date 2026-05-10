@@ -15,7 +15,7 @@ except ImportError:
 __version__ = "0.1.0"
 
 def compress_file(input_path: str, output_path: str, compression_level: int):
-    """Compresses a single .iso file to .7z using py7zr."""
+    """Compresses a single file to .7z using py7zr."""
     logging.info(f"Compressing {input_path} to {output_path} (level {compression_level})...")
     
     try:
@@ -47,14 +47,14 @@ def compress_file(input_path: str, output_path: str, compression_level: int):
         return False, 0
 
 if __name__ == "__main__":
-    desc = "Compress .iso files to .7z using 7zip."
+    desc = "Compress files to .7z using py7zr."
     epilog = """
 Examples:
-  Compress a single ISO file:
+  Compress a single file:
     %(prog)s --file /path/to/game.iso
 
-  Compress a directory of ISO files and delete the originals to save space:
-    %(prog)s --directory /path/to/isos --delete
+  Compress a directory of files and delete the originals to save space:
+    %(prog)s --directory /path/to/isos --delete --file-type .iso .bin
 
   Specify maximum compression and a custom output directory:
     %(prog)s --directory /path/to/isos --level 9 --output-dir /path/to/output
@@ -67,13 +67,13 @@ Examples:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--file", help="Path to a single .iso file to compress")
-    group.add_argument("--directory", help="Path to a directory containing .iso files to compress")
+    group.add_argument("--file", help="Path to a single file to compress")
+    group.add_argument("--directory", help="Path to a directory containing files to compress")
     
     parser.add_argument("--output-dir", help="Path to the output directory for .7z files (defaults to same as input)", required=False)
-
+    parser.add_argument("--file-type", nargs="+", default=[".iso"], help="File extensions to compress when scanning a directory (e.g. .iso .bin). Default is .iso")
     parser.add_argument("--level", type=int, choices=range(0, 10), default=5, help="Compression level from 0 (store) to 9 (ultra). Default is 5.")
-    parser.add_argument("--delete", action="store_true", help="Delete the original .iso file after successful compression.")
+    parser.add_argument("--delete", action="store_true", help="Delete the original file after successful compression.")
     parser.add_argument("--result", help="Path to output a JSON file containing compression statistics", required=False)
     parser.add_argument("--log-file", help="Path to a log file to save the output", required=False)
     parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
@@ -102,13 +102,14 @@ Examples:
         if not os.path.isdir(args.directory):
             logging.error(f"Error: Directory not found -> {args.directory}")
             sys.exit(1)
+        valid_exts = tuple(ext.lower() if ext.startswith('.') else f".{ext.lower()}" for ext in args.file_type)
         for root_dir, _, files in os.walk(args.directory):
             for f in files:
-                if f.lower().endswith('.iso'):
+                if f.lower().endswith(valid_exts):
                     files_to_compress.append(os.path.join(root_dir, f))
                     
     if not files_to_compress:
-        logging.info("No valid .iso files found to compress.")
+        logging.info(f"No valid files matching {args.file_type} found to compress.")
         sys.exit(0)
         
     if args.output_dir and not os.path.exists(args.output_dir):
