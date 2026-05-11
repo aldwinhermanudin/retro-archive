@@ -24,6 +24,8 @@ class ProgressFileWrapper(io.BufferedReader):
         self._filename = filename
 
     def read(self, size=-1):
+        if globals().get('STOP_REQUESTED', False):
+            raise Exception("AbortRequested")
         chunk = super().read(size)
         if chunk:
             self._processed += len(chunk)
@@ -106,6 +108,10 @@ def run_batch_compression(files_to_compress, output_dir, level, delete_orig):
 
     try:
         for filepath in files_to_compress:
+            if globals().get('STOP_REQUESTED', False):
+                logging.warning("\n[!] Compression batch aborted by user.")
+                break
+
             logging.info(f"\n--- Compressing: {filepath} ---")
 
             filename = os.path.basename(filepath)

@@ -85,6 +85,12 @@ class RetroArchiveUI:
         log_frame = ttk.LabelFrame(self.root, text="Log Output")
         log_frame.pack(fill='both', expand=True, padx=10, pady=5)
         
+        button_frame = ttk.Frame(log_frame)
+        button_frame.pack(fill='x', padx=5, pady=0)
+        
+        self.stop_btn = ttk.Button(button_frame, text="Stop Current Task", command=self.stop_task, state='disabled')
+        self.stop_btn.pack(side='right')
+        
         self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, bg='black', fg='white', font=('Courier', 10))
         self.log_text.pack(fill='both', expand=True, padx=5, pady=5)
 
@@ -151,6 +157,13 @@ class RetroArchiveUI:
         self.log_text.delete(1.0, tk.END)
         self.log_text.configure(state='disabled')
 
+    def stop_task(self):
+        if self.is_running:
+            compress.STOP_REQUESTED = True
+            verify.STOP_REQUESTED = True
+            logging.warning("\n[!] Stop requested. Aborting current operation...")
+            self.stop_btn.configure(state='disabled')
+
     def run_compression(self):
         if self.is_running:
             messagebox.showwarning("Task Running", "A task is already running. Please wait for it to finish before starting a new one.")
@@ -167,6 +180,9 @@ class RetroArchiveUI:
         
         self.log_clear()
         self.is_running = True
+        compress.STOP_REQUESTED = False
+        verify.STOP_REQUESTED = False
+        self.stop_btn.configure(state='normal')
         threading.Thread(target=self._compress_task, args=(input_path, output_dir, level, delete_orig), daemon=True).start()
 
     def _compress_task(self, input_path, output_dir, level, delete_orig):
@@ -186,9 +202,11 @@ class RetroArchiveUI:
 
             compress.run_batch_compression(files_to_compress, output_dir, level, delete_orig)
         except Exception as e:
-            logging.error(f"Error during compression: {e}")
+            if str(e) != "AbortRequested":
+                logging.error(f"Error during compression: {e}")
         finally:
             self.is_running = False
+            self.root.after(0, lambda: self.stop_btn.configure(state='disabled'))
 
     def run_verification(self):
         if self.is_running:
@@ -206,6 +224,9 @@ class RetroArchiveUI:
         
         self.log_clear()
         self.is_running = True
+        compress.STOP_REQUESTED = False
+        verify.STOP_REQUESTED = False
+        self.stop_btn.configure(state='normal')
         threading.Thread(target=self._verify_task, args=(input_path, mode, dat_file, archived), daemon=True).start()
 
     def _verify_task(self, input_path, mode, dat_file, archived):
@@ -245,10 +266,12 @@ class RetroArchiveUI:
             else:
                 verify.run_redump_check(files_to_verify, dat_root, archived)
         except Exception as e:
-            logging.error(f"Error during verification: {e}")
+            if str(e) != "AbortRequested":
+                logging.error(f"Error during verification: {e}")
         finally:
             logging.info("\nVerification task complete.")
             self.is_running = False
+            self.root.after(0, lambda: self.stop_btn.configure(state='disabled'))
 
 if __name__ == "__main__":
     root = tk.Tk()

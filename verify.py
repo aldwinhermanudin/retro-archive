@@ -34,6 +34,8 @@ def calculate_hashes_from_stream(f, file_size: int, filename: str):
     
     # Read in 4MB chunks to keep memory usage low
     for chunk in iter(lambda: f.read(4096 * 1024), b""):
+        if globals().get('STOP_REQUESTED', False):
+            raise Exception("AbortRequested")
         md5_hash.update(chunk)
         sha1_hash.update(chunk)
         crc32_hash = zlib.crc32(chunk, crc32_hash)
@@ -63,6 +65,8 @@ class HashCalculationIO(Py7zIO):
         self.crc32_hash = 0
 
     def write(self, s):
+        if globals().get('STOP_REQUESTED', False):
+            raise Exception("AbortRequested")
         self.md5_hash.update(s)
         self.sha1_hash.update(s)
         self.crc32_hash = zlib.crc32(s, self.crc32_hash)
@@ -148,6 +152,10 @@ def run_integrity_check(files_to_verify):
 
     results = {"healthy": [], "corrupted": []}
     for filepath in files_to_verify:
+        if globals().get('STOP_REQUESTED', False):
+            logging.warning("\n[!] Integrity check aborted by user.")
+            break
+
         logging.info(f"\n--- Checking Integrity: {filepath} ---")
         is_zip = filepath.lower().endswith('.zip')
         is_7z = filepath.lower().endswith('.7z')
@@ -222,6 +230,10 @@ def run_redump_check(files_to_verify, dat_root, archived_rom):
             results["unverified"].append(filepath_display)
 
     for filepath in files_to_verify:
+        if globals().get('STOP_REQUESTED', False):
+            logging.warning("\n[!] Verification aborted by user.")
+            break
+
         is_zip = filepath.lower().endswith('.zip')
         is_7z = filepath.lower().endswith('.7z')
         if archived_rom and (is_zip or is_7z):
