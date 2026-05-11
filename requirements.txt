@@ -13,3 +13,4 @@ py7zr>=1.0.0
 #
 #   Arch Linux:
 #     sudo pacman -S tk
+inquirer>=3.1.3

@@ -8,8 +8,8 @@ import logging
 import time
 
 # Import from our existing modules
-import compress
-import verify
+from retroarchive import compress
+from retroarchive import verify
 
 class StdoutRedirector:
     def __init__(self, text_widget, progress_callback=None):

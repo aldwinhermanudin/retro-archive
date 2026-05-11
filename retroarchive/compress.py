@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+import os
+import sys
+import io
+import signal
+import argparse
+import logging
+import time
+import json
+
+try:
+    import py7zr
+except ImportError:
+    print("Error: 'py7zr' module not found. Please activate your venv (e.g. source ~/Developments/venv/bin/activate) or 'pip install py7zr'.", file=sys.stderr)
+    sys.exit(1)
+
+__version__ = "0.1.0"
+
+class ProgressFileWrapper(io.BufferedReader):
+    def __init__(self, raw, size, filename):
+        super().__init__(raw)
+        self._size = size
+        self._processed = 0
+        self._filename = filename
+
+    def read(self, size=-1):
+        if globals().get('STOP_REQUESTED', False):
+            raise Exception("AbortRequested")
+        chunk = super().read(size)
+        if chunk:
+            self._processed += len(chunk)
+            if self._size > 0:
+                percent = (self._processed / self._size) * 100
+                sys.stdout.write(f"\rProgress [{self._filename}]: [{percent:.1f}%] {self._processed/(1024*1024):.1f}MB")
+                sys.stdout.flush()
+        return chunk
+
+# Tracks the output path currently being written so signals can clean up partial files
+_current_output_path = None
+
+def _cleanup_and_exit(signum, frame):
+    """Signal handler for SIGTERM and SIGINT: removes any partial output file and exits."""
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "Ctrl+C"
+    sys.stdout.write("\n")
+    logging.error(f"[!] Interrupted by user ({sig_name}). Cleaning up...")
+    if _current_output_path and os.path.exists(_current_output_path):
+        try:
+            os.remove(_current_output_path)
+            logging.error(f"    Removed partial file: {_current_output_path}")
+        except OSError:
+            pass
+    sys.exit(1)
+
+signal.signal(signal.SIGTERM, _cleanup_and_exit)
+signal.signal(signal.SIGINT, _cleanup_and_exit)
+
+def compress_file(input_path: str, output_path: str, compression_level: int):
+    """Compresses a single file to .7z using py7zr."""
+    logging.info(f"Compressing {input_path} to {output_path} (level {compression_level})...")
+
+    global _current_output_path
+    try:
+        start_time = time.time()
+
+        filters = [{'id': py7zr.FILTER_LZMA2, 'preset': compression_level}]
+        file_size = os.path.getsize(input_path)
+        filename = os.path.basename(input_path)
+
+        _current_output_path = output_path
+        with py7zr.SevenZipFile(output_path, 'w', filters=filters) as archive:
+            with open(input_path, 'rb') as f:
+                wrapped_f = ProgressFileWrapper(f.raw, file_size, filename)
+                archive.writef(wrapped_f, arcname=filename)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        _current_output_path = None
+
+        end_time = time.time()
+        duration = end_time - start_time
+
+        m, s = divmod(duration, 60)
+        h, m = divmod(m, 60)
+        time_str = f"{int(h)}h {int(m)}m {int(s)}s" if h > 0 else f"{int(m)}m {int(s)}s"
+        logging.info(f"\n[✓] Successfully compressed: {os.path.basename(output_path)} in {time_str}")
+        return True, duration
+
+    except Exception as e:
+        logging.error(f"\n[x] An error occurred: {e}")
+        # Clean up output file if it was partially written
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+        return False, 0
+
+def run_batch_compression(files_to_compress, output_dir, level, delete_orig):
+    if not files_to_compress:
+        logging.info("No valid files found to compress.")
+        return {"success": [], "failed": [], "total_time": 0}
+
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    results = {"success": [], "failed": []}
+    logging.info(f"Found {len(files_to_compress)} files to compress.")
+    total_start_time = time.time()
+
+    try:
+        total_files = len(files_to_compress)
+        for i, filepath in enumerate(files_to_compress):
+            cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+            if cb:
+                cb(i, total_files)
+                
+            if globals().get('STOP_REQUESTED', False):
+                logging.warning("\n[!] Compression batch aborted by user.")
+                break
+
+            logging.info(f"\n--- Compressing: {filepath} ---")
+
+            filename = os.path.basename(filepath)
+            name, _ = os.path.splitext(filename)
+            output_filename = f"{name}.7z"
+
+            if output_dir:
+                output_path = os.path.join(output_dir, output_filename)
+            else:
+                output_path = os.path.join(os.path.dirname(filepath), output_filename)
+
+            if os.path.exists(output_path):
+                logging.info(f"Output file already exists, checking integrity: {output_path}")
+                is_corrupted = False
+                try:
+                    with py7zr.SevenZipFile(output_path, 'r') as zf:
+                        zf.test()
+                except Exception:
+                    is_corrupted = True
+
+                if not is_corrupted:
+                    logging.info(f"[✓] Existing archive is healthy, skipping: {output_path}")
+                    continue
+                else:
+                    logging.warning(f"[x] Existing archive is corrupted, overwriting: {output_path}")
+
+            original_size = os.path.getsize(filepath)
+            success, duration = compress_file(filepath, output_path, level)
+
+            if success:
+                compressed_size = os.path.getsize(output_path)
+                bytes_saved = original_size - compressed_size
+                compression_ratio = compressed_size / original_size if original_size > 0 else 0
+
+                logging.info(f"    Original Size:   {original_size / (1024*1024):.2f} MB")
+                logging.info(f"    Compressed Size: {compressed_size / (1024*1024):.2f} MB")
+                logging.info(f"    Space Saved:     {bytes_saved / (1024*1024):.2f} MB ({(1 - compression_ratio) * 100:.1f}%)")
+
+                results["success"].append({
+                    "file": filepath,
+                    "output": output_path,
+                    "compression_time_seconds": round(duration, 2),
+                    "original_size_bytes": original_size,
+                    "compressed_size_bytes": compressed_size,
+                    "bytes_saved": bytes_saved,
+                    "compression_ratio": round(compression_ratio, 4)
+                })
+                if delete_orig:
+                    try:
+                        os.remove(filepath)
+                        logging.info(f"Deleted original file: {filepath}")
+                    except Exception as e:
+                        logging.error(f"Failed to delete original file {filepath}: {e}")
+            else:
+                results["failed"].append(filepath)
+
+    except KeyboardInterrupt:
+        _cleanup_and_exit(signal.SIGINT, None)
+
+    cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+    if cb and not globals().get('STOP_REQUESTED', False):
+        cb(total_files, total_files)
+
+    total_end_time = time.time()
+    total_duration = total_end_time - total_start_time
+    tm, ts = divmod(total_duration, 60)
+    th, tm = divmod(tm, 60)
+    total_time_str = f"{int(th)}h {int(tm)}m {int(ts)}s" if th > 0 else f"{int(tm)}m {int(ts)}s"
+
+    logging.info("\n" + "=" * 40)
+    logging.info("COMPRESSION OVERVIEW")
+    logging.info("=" * 40)
+    logging.info(f"Total time taken:        {total_time_str}")
+    logging.info(f"Total files processed:   {len(files_to_compress)}")
+    logging.info(f"Successfully compressed: {len(results['success'])}")
+    logging.info(f"Failed compression:      {len(results['failed'])}")
+
+    if results['failed']:
+        logging.info("\nFailed Files:")
+        for f in results['failed']:
+            logging.info(f"  - {f}")
+
+    results["total_time"] = total_duration
+    return results
+
+def save_json_report(results, total_files_count, output_path):
+    total_original_size = sum(item["original_size_bytes"] for item in results["success"])
+    total_compressed_size = sum(item["compressed_size_bytes"] for item in results["success"])
+    total_bytes_saved = sum(item["bytes_saved"] for item in results["success"])
+    total_compression_time = sum(item["compression_time_seconds"] for item in results["success"])
+
+    num_success = len(results["success"])
+    avg_original_size = total_original_size / num_success if num_success else 0
+    avg_compressed_size = total_compressed_size / num_success if num_success else 0
+    avg_bytes_saved = total_bytes_saved / num_success if num_success else 0
+    avg_compression_time = total_compression_time / num_success if num_success else 0
+    avg_compression_ratio = total_compressed_size / total_original_size if total_original_size > 0 else 0
+
+    json_output = {
+        "overview": {
+            "total_files_processed": total_files_count,
+            "successful": num_success,
+            "failed": len(results["failed"]),
+            "total_original_size_bytes": total_original_size,
+            "total_compressed_size_bytes": total_compressed_size,
+            "total_bytes_saved": total_bytes_saved,
+            "overall_compression_ratio": round(avg_compression_ratio, 4),
+            "total_compression_time_seconds": round(total_compression_time, 2),
+            "average_metrics_per_file": {
+                "original_size_bytes": round(avg_original_size, 2),
+                "compressed_size_bytes": round(avg_compressed_size, 2),
+                "bytes_saved": round(avg_bytes_saved, 2),
+                "compression_time_seconds": round(avg_compression_time, 2)
+            }
+        },
+        "files": results["success"],
+        "failed_files": results["failed"]
+    }
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(json_output, f, indent=4)
+        logging.info(f"\nSaved JSON results to: {output_path}")
+    except Exception as e:
+        logging.error(f"\nFailed to save JSON results: {e}")
+
