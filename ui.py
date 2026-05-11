@@ -53,6 +53,7 @@ class RetroArchiveUI:
         self.root.title("Retro Archive Tool")
         self.root.geometry("800x600")
         
+        self.is_running = False
         self.create_widgets()
         self.setup_logging()
         
@@ -151,6 +152,10 @@ class RetroArchiveUI:
         self.log_text.configure(state='disabled')
 
     def run_compression(self):
+        if self.is_running:
+            messagebox.showwarning("Task Running", "A task is already running. Please wait for it to finish before starting a new one.")
+            return
+
         input_path = self.comp_input_var.get().strip()
         if not input_path:
             messagebox.showerror("Error", "Please select an input file or directory.")
@@ -161,28 +166,35 @@ class RetroArchiveUI:
         output_dir = self.comp_output_var.get().strip()
         
         self.log_clear()
+        self.is_running = True
         threading.Thread(target=self._compress_task, args=(input_path, output_dir, level, delete_orig), daemon=True).start()
 
     def _compress_task(self, input_path, output_dir, level, delete_orig):
-        files_to_compress = []
-        if os.path.isfile(input_path):
-            files_to_compress.append(input_path)
-        elif os.path.isdir(input_path):
-            for root_dir, _, files in os.walk(input_path):
-                for f in files:
-                    if not f.lower().endswith('.7z'):
-                        files_to_compress.append(os.path.join(root_dir, f))
-                        
-        if not files_to_compress:
-            logging.info("No files found to compress.")
-            return
-
         try:
+            files_to_compress = []
+            if os.path.isfile(input_path):
+                files_to_compress.append(input_path)
+            elif os.path.isdir(input_path):
+                for root_dir, _, files in os.walk(input_path):
+                    for f in files:
+                        if not f.lower().endswith('.7z'):
+                            files_to_compress.append(os.path.join(root_dir, f))
+                            
+            if not files_to_compress:
+                logging.info("No files found to compress.")
+                return
+
             compress.run_batch_compression(files_to_compress, output_dir, level, delete_orig)
         except Exception as e:
             logging.error(f"Error during compression: {e}")
+        finally:
+            self.is_running = False
 
     def run_verification(self):
+        if self.is_running:
+            messagebox.showwarning("Task Running", "A task is already running. Please wait for it to finish before starting a new one.")
+            return
+
         input_path = self.ver_input_var.get().strip()
         if not input_path:
             messagebox.showerror("Error", "Please select an input file or directory.")
@@ -193,48 +205,50 @@ class RetroArchiveUI:
         archived = self.ver_archived_var.get()
         
         self.log_clear()
+        self.is_running = True
         threading.Thread(target=self._verify_task, args=(input_path, mode, dat_file, archived), daemon=True).start()
 
     def _verify_task(self, input_path, mode, dat_file, archived):
-        files_to_verify = []
-        if os.path.isfile(input_path):
-            files_to_verify.append(input_path)
-        elif os.path.isdir(input_path):
-            for root_dir, _, files in os.walk(input_path):
-                for f in files:
-                    if mode == 'integrity':
-                        if f.lower().endswith(('.zip', '.7z')):
-                            files_to_verify.append(os.path.join(root_dir, f))
-                    else:
-                        if f.lower().endswith(('.iso', '.zip', '.bin', '.7z')):
-                            files_to_verify.append(os.path.join(root_dir, f))
-
-        if not files_to_verify:
-            logging.info("No valid files found to verify.")
-            return
-            
-        dat_root = None
-        if mode == 'redump' and dat_file:
-            logging.info(f"Loading DAT file: {dat_file}")
-            try:
-                import xml.etree.ElementTree as ET
-                tree = ET.parse(dat_file)
-                dat_root = tree.getroot()
-            except Exception as e:
-                logging.error(f"Error parsing DAT file: {e}")
-                return
-
-        logging.info(f"Starting verification ({mode}) for {len(files_to_verify)} files...")
-        
         try:
+            files_to_verify = []
+            if os.path.isfile(input_path):
+                files_to_verify.append(input_path)
+            elif os.path.isdir(input_path):
+                for root_dir, _, files in os.walk(input_path):
+                    for f in files:
+                        if mode == 'integrity':
+                            if f.lower().endswith(('.zip', '.7z')):
+                                files_to_verify.append(os.path.join(root_dir, f))
+                        else:
+                            if f.lower().endswith(('.iso', '.zip', '.bin', '.7z')):
+                                files_to_verify.append(os.path.join(root_dir, f))
+
+            if not files_to_verify:
+                logging.info("No valid files found to verify.")
+                return
+                
+            dat_root = None
+            if mode == 'redump' and dat_file:
+                logging.info(f"Loading DAT file: {dat_file}")
+                try:
+                    import xml.etree.ElementTree as ET
+                    tree = ET.parse(dat_file)
+                    dat_root = tree.getroot()
+                except Exception as e:
+                    logging.error(f"Error parsing DAT file: {e}")
+                    return
+
+            logging.info(f"Starting verification ({mode}) for {len(files_to_verify)} files...")
+            
             if mode == 'integrity':
                 verify.run_integrity_check(files_to_verify)
             else:
                 verify.run_redump_check(files_to_verify, dat_root, archived)
         except Exception as e:
             logging.error(f"Error during verification: {e}")
-            
-        logging.info("\nVerification task complete.")
+        finally:
+            logging.info("\nVerification task complete.")
+            self.is_running = False
 
 if __name__ == "__main__":
     root = tk.Tk()
