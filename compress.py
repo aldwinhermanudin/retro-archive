@@ -107,7 +107,12 @@ def run_batch_compression(files_to_compress, output_dir, level, delete_orig):
     total_start_time = time.time()
 
     try:
-        for filepath in files_to_compress:
+        total_files = len(files_to_compress)
+        for i, filepath in enumerate(files_to_compress):
+            cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+            if cb:
+                cb(i, total_files)
+                
             if globals().get('STOP_REQUESTED', False):
                 logging.warning("\n[!] Compression batch aborted by user.")
                 break
@@ -170,6 +175,10 @@ def run_batch_compression(files_to_compress, output_dir, level, delete_orig):
 
     except KeyboardInterrupt:
         _cleanup_and_exit(signal.SIGINT, None)
+
+    cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+    if cb and not globals().get('STOP_REQUESTED', False):
+        cb(total_files, total_files)
 
     total_end_time = time.time()
     total_duration = total_end_time - total_start_time

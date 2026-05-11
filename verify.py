@@ -151,7 +151,12 @@ def run_integrity_check(files_to_verify):
         return {"healthy": [], "corrupted": []}
 
     results = {"healthy": [], "corrupted": []}
-    for filepath in files_to_verify:
+    total_files = len(files_to_verify)
+    for i, filepath in enumerate(files_to_verify):
+        cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+        if cb:
+            cb(i, total_files)
+            
         if globals().get('STOP_REQUESTED', False):
             logging.warning("\n[!] Integrity check aborted by user.")
             break
@@ -189,6 +194,10 @@ def run_integrity_check(files_to_verify):
             except Exception as e:
                 logging.error(f"[x] CORRUPTED: Error testing 7z file -> {e}")
                 results["corrupted"].append({"file": filepath, "reason": str(e)})
+
+    cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+    if cb and not globals().get('STOP_REQUESTED', False):
+        cb(total_files, total_files)
 
     logging.info("\n" + "=" * 40)
     logging.info("INTEGRITY CHECK OVERVIEW")
@@ -229,7 +238,12 @@ def run_redump_check(files_to_verify, dat_root, archived_rom):
         else:
             results["unverified"].append(filepath_display)
 
-    for filepath in files_to_verify:
+    total_files = len(files_to_verify)
+    for i, filepath in enumerate(files_to_verify):
+        cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+        if cb:
+            cb(i, total_files)
+
         if globals().get('STOP_REQUESTED', False):
             logging.warning("\n[!] Verification aborted by user.")
             break
@@ -287,6 +301,10 @@ def run_redump_check(files_to_verify, dat_root, archived_rom):
             logging.info(f"\n--- Verifying: {filepath} ---")
             hashes = calculate_hashes(filepath)
             process_match(filepath, hashes)
+
+    cb = globals().get('TOTAL_PROGRESS_CALLBACK')
+    if cb and not globals().get('STOP_REQUESTED', False):
+        cb(total_files, total_files)
 
     logging.info("\n" + "=" * 40)
     logging.info("VERIFICATION OVERVIEW")
