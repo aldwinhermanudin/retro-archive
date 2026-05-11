@@ -320,6 +320,28 @@ def run_redump_check(files_to_verify, dat_root, archived_rom):
 
     return results
 
+def save_json_report(results, output_path):
+    if "matched" in results:
+        # Redump check results
+        json_output = {
+            "matched": {os.path.basename(item["file"]): item["sha1"] for item in results["matched"]},
+            "failed": {
+                os.path.basename(item["file"]): {"sha1": item["sha1"], "reason": item["reason"]} for item in results["failed"]
+            }
+        }
+    else:
+        # Integrity check results
+        json_output = {
+            "healthy": results["healthy"],
+            "corrupted": results["corrupted"]
+        }
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(json_output, f, indent=4)
+        logging.info(f"\nSaved JSON results to: {output_path}")
+    except Exception as e:
+        logging.error(f"\nFailed to save JSON results: {e}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Verify ROMs/ISOs.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -408,15 +430,4 @@ if __name__ == "__main__":
         results = run_redump_check(files_to_verify, dat_root, args.archived_rom)
 
     if args.result:
-        json_output = {
-            "matched": {os.path.basename(item["file"]): item["sha1"] for item in results["matched"]},
-            "failed": {
-                os.path.basename(item["file"]): {"sha1": item["sha1"], "reason": item["reason"]} for item in results["failed"]
-            }
-        }
-        try:
-            with open(args.result, "w", encoding="utf-8") as f:
-                json.dump(json_output, f, indent=4)
-            logging.info(f"\nSaved verified results to JSON: {args.result}")
-        except Exception as e:
-            logging.error(f"\nFailed to save results to JSON: {e}")
+        save_json_report(results, args.result)

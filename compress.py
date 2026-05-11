@@ -202,6 +202,46 @@ def run_batch_compression(files_to_compress, output_dir, level, delete_orig):
     results["total_time"] = total_duration
     return results
 
+def save_json_report(results, total_files_count, output_path):
+    total_original_size = sum(item["original_size_bytes"] for item in results["success"])
+    total_compressed_size = sum(item["compressed_size_bytes"] for item in results["success"])
+    total_bytes_saved = sum(item["bytes_saved"] for item in results["success"])
+    total_compression_time = sum(item["compression_time_seconds"] for item in results["success"])
+
+    num_success = len(results["success"])
+    avg_original_size = total_original_size / num_success if num_success else 0
+    avg_compressed_size = total_compressed_size / num_success if num_success else 0
+    avg_bytes_saved = total_bytes_saved / num_success if num_success else 0
+    avg_compression_time = total_compression_time / num_success if num_success else 0
+    avg_compression_ratio = total_compressed_size / total_original_size if total_original_size > 0 else 0
+
+    json_output = {
+        "overview": {
+            "total_files_processed": total_files_count,
+            "successful": num_success,
+            "failed": len(results["failed"]),
+            "total_original_size_bytes": total_original_size,
+            "total_compressed_size_bytes": total_compressed_size,
+            "total_bytes_saved": total_bytes_saved,
+            "overall_compression_ratio": round(avg_compression_ratio, 4),
+            "total_compression_time_seconds": round(total_compression_time, 2),
+            "average_metrics_per_file": {
+                "original_size_bytes": round(avg_original_size, 2),
+                "compressed_size_bytes": round(avg_compressed_size, 2),
+                "bytes_saved": round(avg_bytes_saved, 2),
+                "compression_time_seconds": round(avg_compression_time, 2)
+            }
+        },
+        "files": results["success"],
+        "failed_files": results["failed"]
+    }
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(json_output, f, indent=4)
+        logging.info(f"\nSaved JSON results to: {output_path}")
+    except Exception as e:
+        logging.error(f"\nFailed to save JSON results: {e}")
+
 if __name__ == "__main__":
     desc = "Compress files to .7z using py7zr."
     epilog = """
@@ -281,41 +321,4 @@ Examples:
 
 
     if args.result:
-        total_original_size = sum(item["original_size_bytes"] for item in results["success"])
-        total_compressed_size = sum(item["compressed_size_bytes"] for item in results["success"])
-        total_bytes_saved = sum(item["bytes_saved"] for item in results["success"])
-        total_compression_time = sum(item["compression_time_seconds"] for item in results["success"])
-
-        num_success = len(results["success"])
-        avg_original_size = total_original_size / num_success if num_success else 0
-        avg_compressed_size = total_compressed_size / num_success if num_success else 0
-        avg_bytes_saved = total_bytes_saved / num_success if num_success else 0
-        avg_compression_time = total_compression_time / num_success if num_success else 0
-        avg_compression_ratio = total_compressed_size / total_original_size if total_original_size > 0 else 0
-
-        json_output = {
-            "overview": {
-                "total_files_processed": len(files_to_compress),
-                "successful": num_success,
-                "failed": len(results["failed"]),
-                "total_original_size_bytes": total_original_size,
-                "total_compressed_size_bytes": total_compressed_size,
-                "total_bytes_saved": total_bytes_saved,
-                "overall_compression_ratio": round(avg_compression_ratio, 4),
-                "total_compression_time_seconds": round(total_compression_time, 2),
-                "average_metrics_per_file": {
-                    "original_size_bytes": round(avg_original_size, 2),
-                    "compressed_size_bytes": round(avg_compressed_size, 2),
-                    "bytes_saved": round(avg_bytes_saved, 2),
-                    "compression_time_seconds": round(avg_compression_time, 2)
-                }
-            },
-            "files": results["success"],
-            "failed_files": results["failed"]
-        }
-        try:
-            with open(args.result, "w", encoding="utf-8") as f:
-                json.dump(json_output, f, indent=4)
-            logging.info(f"\nSaved JSON results to: {args.result}")
-        except Exception as e:
-            logging.error(f"\nFailed to save JSON results: {e}")
+        save_json_report(results, len(files_to_compress), args.result)

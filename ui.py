@@ -113,6 +113,15 @@ class RetroArchiveUI:
         self.total_progress_bar = ttk.Progressbar(total_progress_frame, orient='horizontal', mode='determinate')
         self.total_progress_bar.pack(fill='x', expand=True, pady=2)
         
+        # Global Options Section
+        global_opts_frame = ttk.LabelFrame(self.root, text="Reports Output")
+        global_opts_frame.pack(fill='x', padx=10, pady=5)
+        
+        self.report_dir_var = tk.StringVar(value=os.getcwd())
+        ttk.Label(global_opts_frame, text="Directory:").pack(side='left', padx=5)
+        ttk.Entry(global_opts_frame, textvariable=self.report_dir_var).pack(side='left', fill='x', expand=True, padx=5, pady=5)
+        ttk.Button(global_opts_frame, text="Browse", command=lambda: self.report_dir_var.set(filedialog.askdirectory())).pack(side='left', padx=5)
+        
         # Log Output Section
         log_frame = ttk.LabelFrame(self.root, text="Log Output")
         log_frame.pack(fill='both', expand=True, padx=10, pady=5)
@@ -255,7 +264,17 @@ class RetroArchiveUI:
                 logging.info("No files found to compress.")
                 return
 
-            compress.run_batch_compression(files_to_compress, output_dir, level, delete_orig)
+            results = compress.run_batch_compression(files_to_compress, output_dir, level, delete_orig)
+            
+            report_dir = self.report_dir_var.get().strip() or os.getcwd()
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            json_path = os.path.join(report_dir, f"compress_report_{timestamp}.json")
+            compress.save_json_report(results, len(files_to_compress), json_path)
+            
+            log_path = os.path.join(report_dir, f"compress_log_{timestamp}.txt")
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write(self.log_text.get(1.0, tk.END))
+            logging.info(f"\nSaved log to: {log_path}")
         except Exception as e:
             if str(e) != "AbortRequested":
                 logging.error(f"Error during compression: {e}")
@@ -321,9 +340,19 @@ class RetroArchiveUI:
             logging.info(f"Starting verification ({mode}) for {len(files_to_verify)} files...")
             
             if mode == 'integrity':
-                verify.run_integrity_check(files_to_verify)
+                results = verify.run_integrity_check(files_to_verify)
             else:
-                verify.run_redump_check(files_to_verify, dat_root, archived)
+                results = verify.run_redump_check(files_to_verify, dat_root, archived)
+
+            report_dir = self.report_dir_var.get().strip() or os.getcwd()
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            json_path = os.path.join(report_dir, f"verify_report_{timestamp}.json")
+            verify.save_json_report(results, json_path)
+            
+            log_path = os.path.join(report_dir, f"verify_log_{timestamp}.txt")
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write(self.log_text.get(1.0, tk.END))
+            logging.info(f"\nSaved log to: {log_path}")
         except Exception as e:
             if str(e) != "AbortRequested":
                 logging.error(f"Error during verification: {e}")
