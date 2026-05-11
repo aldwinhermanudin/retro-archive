@@ -166,7 +166,7 @@ class RetroArchiveUI:
         ttk.Label(options_frame, text="DAT File (for Redump):").grid(row=1, column=0, padx=5, pady=5, sticky='w')
         self.ver_dat_var = tk.StringVar()
         ttk.Entry(options_frame, textvariable=self.ver_dat_var, width=30).grid(row=1, column=1, columnspan=2, padx=5, pady=5, sticky='we')
-        ttk.Button(options_frame, text="Browse", command=lambda: self.ver_dat_var.set(filedialog.askopenfilename(filetypes=[("XML DAT files", "*.dat;*.xml")]))).grid(row=1, column=3, padx=5, pady=5)
+        ttk.Button(options_frame, text="Browse", command=lambda: self.ver_dat_var.set(filedialog.askopenfilename(filetypes=[("DAT files", "*.dat"), ("XML files", "*.xml"), ("All files", "*.*")]))).grid(row=1, column=3, padx=5, pady=5)
         
         self.ver_archived_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(options_frame, text="Verify inside Archives (ZIP/7z)", variable=self.ver_archived_var).grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky='w')
