@@ -103,6 +103,16 @@ class RetroArchiveUI:
         self.progress_bar = ttk.Progressbar(progress_frame, orient='horizontal', mode='determinate')
         self.progress_bar.pack(fill='x', expand=True, pady=2)
         
+        # Total Progress Section
+        total_progress_frame = ttk.Frame(self.root)
+        total_progress_frame.pack(fill='x', padx=10, pady=5)
+        
+        self.total_progress_label = ttk.Label(total_progress_frame, text="Total Progress: 0/0 (0%)")
+        self.total_progress_label.pack(side='top', anchor='w')
+        
+        self.total_progress_bar = ttk.Progressbar(total_progress_frame, orient='horizontal', mode='determinate')
+        self.total_progress_bar.pack(fill='x', expand=True, pady=2)
+        
         # Log Output Section
         log_frame = ttk.LabelFrame(self.root, text="Log Output")
         log_frame.pack(fill='both', expand=True, padx=10, pady=5)
@@ -180,13 +190,24 @@ class RetroArchiveUI:
         self.log_text.configure(state='disabled')
 
     def update_progress(self, filename, percent):
-        text = f"Processing: {filename}" if filename else "Processing..."
+        text = f"Processing: {filename} ({percent:.1f}%)" if filename else f"Processing... ({percent:.1f}%)"
         self.progress_label.config(text=text)
         self.progress_bar['value'] = percent
+
+    def update_total_progress(self, current, total):
+        percent = (current / total) * 100 if total > 0 else 0
+        text = f"Total Progress: {current}/{total} ({percent:.1f}%)"
+        self.root.after(0, self._set_total_progress, text, percent)
+
+    def _set_total_progress(self, text, percent):
+        self.total_progress_label.config(text=text)
+        self.total_progress_bar['value'] = percent
         
     def reset_progress(self):
         self.progress_label.config(text="Idle")
         self.progress_bar['value'] = 0
+        self.total_progress_label.config(text="Total Progress: 0/0 (0.0%)")
+        self.total_progress_bar['value'] = 0
 
     def stop_task(self):
         if self.is_running:
@@ -214,6 +235,8 @@ class RetroArchiveUI:
         self.is_running = True
         compress.STOP_REQUESTED = False
         verify.STOP_REQUESTED = False
+        compress.TOTAL_PROGRESS_CALLBACK = self.update_total_progress
+        verify.TOTAL_PROGRESS_CALLBACK = self.update_total_progress
         self.stop_btn.configure(state='normal')
         threading.Thread(target=self._compress_task, args=(input_path, output_dir, level, delete_orig), daemon=True).start()
 
@@ -260,6 +283,8 @@ class RetroArchiveUI:
         self.is_running = True
         compress.STOP_REQUESTED = False
         verify.STOP_REQUESTED = False
+        compress.TOTAL_PROGRESS_CALLBACK = self.update_total_progress
+        verify.TOTAL_PROGRESS_CALLBACK = self.update_total_progress
         self.stop_btn.configure(state='normal')
         threading.Thread(target=self._verify_task, args=(input_path, mode, dat_file, archived), daemon=True).start()
 
