@@ -12,13 +12,25 @@ import compress
 import verify
 
 class StdoutRedirector:
-    def __init__(self, text_widget):
+    def __init__(self, text_widget, progress_callback=None):
         self.text_widget = text_widget
+        self.progress_callback = progress_callback
         
     def write(self, string):
         self.text_widget.after(0, self._write, string)
         
     def _write(self, string):
+        import re
+        if self.progress_callback and '\rProgress' in string:
+            match = re.search(r'Progress(?: \[([^\]]+)\])?:\s*\[([\d\.]+)%\]', string)
+            if match:
+                filename = match.group(1) or ""
+                try:
+                    percent = float(match.group(2))
+                    self.progress_callback(filename, percent)
+                except ValueError:
+                    pass
+
         self.text_widget.configure(state='normal')
         for char in string:
             if char == '\r':
@@ -58,7 +70,7 @@ class RetroArchiveUI:
         self.setup_logging()
         
     def setup_logging(self):
-        sys.stdout = StdoutRedirector(self.log_text)
+        sys.stdout = StdoutRedirector(self.log_text, self.update_progress)
         sys.stderr = StdoutRedirector(self.log_text)
         
         logger = logging.getLogger()
@@ -80,6 +92,16 @@ class RetroArchiveUI:
         
         self.setup_compress_tab()
         self.setup_verify_tab()
+        
+        # Progress Section
+        progress_frame = ttk.Frame(self.root)
+        progress_frame.pack(fill='x', padx=10, pady=5)
+        
+        self.progress_label = ttk.Label(progress_frame, text="Idle")
+        self.progress_label.pack(side='top', anchor='w')
+        
+        self.progress_bar = ttk.Progressbar(progress_frame, orient='horizontal', mode='determinate')
+        self.progress_bar.pack(fill='x', expand=True, pady=2)
         
         # Log Output Section
         log_frame = ttk.LabelFrame(self.root, text="Log Output")
@@ -157,6 +179,15 @@ class RetroArchiveUI:
         self.log_text.delete(1.0, tk.END)
         self.log_text.configure(state='disabled')
 
+    def update_progress(self, filename, percent):
+        text = f"Processing: {filename}" if filename else "Processing..."
+        self.progress_label.config(text=text)
+        self.progress_bar['value'] = percent
+        
+    def reset_progress(self):
+        self.progress_label.config(text="Idle")
+        self.progress_bar['value'] = 0
+
     def stop_task(self):
         if self.is_running:
             compress.STOP_REQUESTED = True
@@ -179,6 +210,7 @@ class RetroArchiveUI:
         output_dir = self.comp_output_var.get().strip()
         
         self.log_clear()
+        self.reset_progress()
         self.is_running = True
         compress.STOP_REQUESTED = False
         verify.STOP_REQUESTED = False
@@ -207,6 +239,7 @@ class RetroArchiveUI:
         finally:
             self.is_running = False
             self.root.after(0, lambda: self.stop_btn.configure(state='disabled'))
+            self.root.after(0, self.reset_progress)
 
     def run_verification(self):
         if self.is_running:
@@ -223,6 +256,7 @@ class RetroArchiveUI:
         archived = self.ver_archived_var.get()
         
         self.log_clear()
+        self.reset_progress()
         self.is_running = True
         compress.STOP_REQUESTED = False
         verify.STOP_REQUESTED = False
@@ -272,6 +306,7 @@ class RetroArchiveUI:
             logging.info("\nVerification task complete.")
             self.is_running = False
             self.root.after(0, lambda: self.stop_btn.configure(state='disabled'))
+            self.root.after(0, self.reset_progress)
 
 if __name__ == "__main__":
     root = tk.Tk()
